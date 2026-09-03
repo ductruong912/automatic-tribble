@@ -23,12 +23,9 @@ from docx import Document
 # Local imports
 from config.settings import Config
 from ..extractors.extractors import (
-    PDFTextExtractor,
-    DOCXTextExtractor,
     CSVTextExtractor,
     TXTTextExtractor,
     XLSXTextExtractor,
-    DOCLegacyTextExtractor,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,85 +88,8 @@ class TextProcessor(BaseProcessor):
         return self.chunk_text(text)
 
 
-class PDFProcessor(BaseProcessor):
-    """Processor for PDF documents using Docling for basic extraction."""
-
-    def __init__(self, extractor=None, enable_ocr: bool = False):
-        super().__init__()
-        self.extractor = extractor or PDFTextExtractor()
-        self.enable_ocr = enable_ocr
-        # Initialize Docling processor for PDF processing
-        from .docling_processor import DoclingProcessor
-        self.docling_processor = DoclingProcessor(enable_ocr=enable_ocr)
-
-    async def process(
-        self, content: bytes, filename: Optional[str] = None
-    ) -> Tuple[List[str], Optional[float]]:
-        self.validate_file_size(content)
-        
-        # Use Docling processor for PDF processing
-        try:
-            import time
-            start_time = time.time()
-            
-            # Process with Docling for basic extraction
-            result = await self.docling_processor.process_document(
-                content, 
-                filename or "unknown.pdf",
-                chunk_size=1000,
-                overlap=0
-            )
-            
-            processing_time = time.time() - start_time
-            chunks = result.get("documents", [])
-            
-            logger.info(f"\u2705 Docling processed PDF: {len(chunks)} chunks in {processing_time:.2f} seconds")
-            return chunks, processing_time
-            
-        except Exception as e:
-            logger.warning(f"\u26a0\ufe0f Docling PDF processing failed: {e}")
-            # Fallback to original extractor if Docling fails
-            try:
-                text = await self.extractor.extract(content, filename)
-                if isinstance(text, list):
-                    chunks = text
-                else:
-                    chunks = self.chunk_text(text)
-                return chunks, None
-            except Exception as fallback_error:
-                logger.error(f"PDF processing completely failed: {fallback_error}")
-                return [], None
-
-
-class DocumentProcessor(BaseProcessor):
-    """Processor for Word documents (.docx, .doc)."""
-
-    def __init__(self, docx_extractor=None, doc_extractor=None):
-        super().__init__()
-        self.docx_extractor = docx_extractor or DOCXTextExtractor()
-        self.doc_extractor = doc_extractor or DOCLegacyTextExtractor()
-
-    async def process(
-        self, content: bytes, filename: Optional[str] = None
-    ) -> List[str]:
-        self.validate_file_size(content)
-        if (
-            filename
-            and filename.lower().endswith(".doc")
-            and not filename.lower().endswith(".docx")
-        ):
-            text = await self.doc_extractor.extract(content, filename)
-        else:
-            text = await self.docx_extractor.extract(content, filename)
-
-        # Handle case where extractor returns a list instead of string
-        if isinstance(text, list):
-            return text  # Already chunked
-        return self.chunk_text(text)
-
-
 class SpreadsheetProcessor(BaseProcessor):
-    """Processor for spreadsheet files (.csv, .xlsx, .xls)."""
+    """Processor for spreadsheet files (.csv, .xlsx)."""
 
     def __init__(self, extractor=None, xlsx_extractor=None):
         super().__init__()
@@ -187,7 +107,7 @@ class SpreadsheetProcessor(BaseProcessor):
             if isinstance(text, list):
                 return text  # Already chunked
             return self.chunk_text(text)
-        elif file_ext in ["xlsx", "xls"]:
+        elif file_ext == "xlsx":
             sheet_texts = await self.xlsx_extractor.extract(content, filename)
             # XLSXTextExtractor already returns properly chunked content (one chunk per sheet)
             # No need to re-chunk as it's already structured correctly

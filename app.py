@@ -851,8 +851,8 @@ class ChatApp:
                 st.subheader("Documents")
                 uploader_key = st.session_state.get("uploaded_docs_uploader_key", "uploaded_docs_uploader")
                 uploaded_docs = st.file_uploader(
-                    "Upload (.pdf, .txt, .doc, .docx, .xls, .xlsx)",
-                    type=["pdf", "txt", "doc", "docx", "xls", "xlsx"],
+                    "Upload (.pdf, .txt, .docx, .csv, .xlsx)",
+                    type=["pdf", "txt", "docx", "csv", "xlsx"],
                     accept_multiple_files=True,
                     key=uploader_key
                 )

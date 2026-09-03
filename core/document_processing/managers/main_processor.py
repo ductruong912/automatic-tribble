@@ -24,6 +24,9 @@ class MainDocumentProcessor:
 
     SUPPORTED_EXTENSIONS = set(Config.File.ALLOWED_EXTENSIONS())
 
+    # Formats Docling cannot convert; handled by our own processors instead
+    NON_DOCLING_EXTENSIONS = {'.txt', '.csv', '.xlsx'}
+
     def __init__(
         self,
         file_manager=None,
@@ -84,14 +87,20 @@ class MainDocumentProcessor:
             raise ValueError(f"Unsupported file type: {file_ext}")
 
         try:
-            # Use custom SpreadsheetProcessor for Excel files to handle sheets separately
-            if file_ext in ['.xlsx', '.xls', '.csv']:
-                from ..processors.processors import SpreadsheetProcessor
-                spreadsheet_processor = SpreadsheetProcessor()
-                
-                # Process using our custom extractor that handles sheets separately
-                documents = await spreadsheet_processor.process(file_content, filename)
-                
+            # Formats Docling does not handle are routed to our own processors
+            if file_ext in self.NON_DOCLING_EXTENSIONS:
+                if file_ext == '.txt':
+                    from ..processors.processors import TextProcessor
+                    processor = TextProcessor()
+                    processor_version = "text_processor"
+                else:
+                    # Spreadsheets use a custom extractor that handles sheets separately
+                    from ..processors.processors import SpreadsheetProcessor
+                    processor = SpreadsheetProcessor()
+                    processor_version = "spreadsheet_processor"
+
+                documents = await processor.process(file_content, filename)
+
                 if not documents:
                     raise ValueError(f"No content could be extracted from {filename}")
 
@@ -106,7 +115,7 @@ class MainDocumentProcessor:
                     "metadata": {
                         "chunks_directory": chunks_dir,
                         "processing_timestamp": datetime.now().isoformat(),
-                        "processor_version": "spreadsheet_processor",
+                        "processor_version": processor_version,
                         "chunk_size": Config.File.CHUNK_SIZE(),
                         "chunk_overlap": Config.File.CHUNK_OVERLAP(),
                         "file_type": file_ext,

@@ -114,7 +114,7 @@ class FileConfig:
     @staticmethod
     def ALLOWED_EXTENSIONS():
         return os.getenv(
-            "ALLOWED_EXTENSIONS", ".txt,.pdf,.docx,.doc,.csv,.xlsx,.xls"
+            "ALLOWED_EXTENSIONS", ".txt,.pdf,.docx,.csv,.xlsx"
         ).split(",")
 
     @staticmethod

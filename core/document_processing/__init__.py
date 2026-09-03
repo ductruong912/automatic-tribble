@@ -8,8 +8,6 @@ from .managers.file_manager import FileManager
 from .processors.processors import (
     BaseProcessor,
     TextProcessor,
-    PDFProcessor,
-    DocumentProcessor,
     SpreadsheetProcessor,
 )
 
@@ -18,7 +16,5 @@ __all__ = [
     "FileManager",
     "BaseProcessor",
     "TextProcessor", 
-    "PDFProcessor",
-    "DocumentProcessor",
     "SpreadsheetProcessor",
 ]
