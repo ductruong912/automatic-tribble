@@ -1,0 +1,64 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+
+# Virtual environment folders
+.venv/
+venv/
+env/
+
+# Development files
+.git/
+.gitignore
+README.md
+LICENSE
+*.md
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment variables (keep .env.example)
+.env
+.env.local
+.env.production
+
+# Python packaging artifacts
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# System-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log files
+*.log
+logs/
+
+# Test files
+test_*
+*_test.py
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data files (will be mounted as volume)
+data/chunks/*
+data/vectors/*
+data/temp/*
+
+# Large model files (downloaded at runtime)
+*.pkl
+*.bin
+*.safetensors
