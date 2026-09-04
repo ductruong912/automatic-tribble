@@ -19,7 +19,6 @@ services:
       - HOST=0.0.0.0
       - PORT=8500
       - DEBUG=False
-      - RELOAD=False
       - UVICORN_WORKERS=1
 
       # Logging Configuration
@@ -28,7 +27,6 @@ services:
       - LOG_DIR=data/logs
 
       # LLM Config optimizations
-      - LLM_CACHE_ENABLED=True
       - LLM_CACHE_TTL=3600
       - LLM_CACHE_MAX_ENTRIES=1000
       - MAX_CONTEXT_LENGTH=5000 
@@ -43,13 +41,18 @@ services:
       - MAX_FILES_PER_BATCH=10
       - MAX_TOTAL_BATCH_SIZE=209715200
 
-      # Simple OCR Configuration
-      - DOCLING_OCR_ENABLED=true
-      - TESSERACT_CMD=/usr/bin/tesseract
-      - OCR_CONCURRENT_PAGES=2
+      # OCR
+      - OCR_ENGINE=easyocr
+      - OCR_LANGUAGES=vi
+      - OCR_RAPIDOCR_MODEL_SIZE=small
+      - OCR_EASYOCR_LOW_TEXT=0.35
+      - OCR_GPU=auto
+      - OCR_DPI=300
+      - OCR_AUTO_ROTATE=true
+      - OCR_PREPROCESS_PROFILE=light
+      - PDF_TEXT_MIN_CHARS_PER_PAGE=100
+      - PDF_TEXT_MIN_DIACRITIC_RATIO=0.03
       - OCR_MAX_CONCURRENT_FILES=1
-      - OCR_FORCE_ALL_PDFS=false
-      - OCR_FORCE_FULL_PAGE=true
 
       # Data Structure Paths
       - CHUNKS_DIR=data/chunks
@@ -67,10 +70,7 @@ services:
       - CHUNK_OVERLAP=0
 
       # Vector Store Configuration
-      - VECTOR_STORE_BACKEND=optimized
       - USE_FAISS_INDEX=True
-      - CACHE_EMBEDDINGS=True
-      - EMBEDDING_BATCH_SIZE=32
 
       # Vietnamese Preprocessing Configuration
       - VIETNAMESE_PREPROCESSING_ENABLED=True

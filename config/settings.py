@@ -271,47 +271,58 @@ class OCRConfig:
     """OCR and document processing configuration."""
 
     @staticmethod
-    def DOCLING_OCR_ENABLED():
-        return os.getenv("DOCLING_OCR_ENABLED", "false").lower() == "true"
+    def OCR_ENGINE():
+        """OCR backend: 'easyocr' (accurate on prose) or 'rapidocr' (fast, better on tables)."""
+        return os.getenv("OCR_ENGINE", "easyocr")
 
     @staticmethod
-    def TESSERACT_CMD():
-        return os.getenv(
-            "TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        )
+    def OCR_LANGUAGES():
+        return [lang.strip() for lang in os.getenv("OCR_LANGUAGES", "vi").split(",") if lang.strip()]
 
     @staticmethod
-    def TESSERACT_TESSDATA_DIR():
-        return os.getenv(
-            "TESSERACT_TESSDATA_DIR", str(Path(__file__).parent.parent / "tessdata")
-        )
+    def OCR_EASYOCR_LOW_TEXT():
+        """EasyOCR stroke-faintness threshold; below its 0.4 default to catch faint words."""
+        return float(os.getenv("OCR_EASYOCR_LOW_TEXT", "0.35"))
 
     @staticmethod
-    def OCR_FORCE_FULL_PAGE():
-        return os.getenv("OCR_FORCE_FULL_PAGE", "true").lower() == "true"
+    def OCR_GPU():
+        """'auto' uses CUDA when available; 'false' forces CPU."""
+        return os.getenv("OCR_GPU", "auto").strip().lower()
 
     @staticmethod
-    def OCR_FORCE_ALL_PDFS():
-        return os.getenv("OCR_FORCE_ALL_PDFS", "false").lower() == "true"
+    def OCR_RAPIDOCR_MODEL_SIZE():
+        """PP-OCRv6 tier for the rapidocr engine: tiny, small or medium."""
+        return os.getenv("OCR_RAPIDOCR_MODEL_SIZE", "small")
 
     @staticmethod
-    def OCR_CONCURRENT_PAGES():
-        return int(os.getenv("OCR_CONCURRENT_PAGES", "2"))
+    def OCR_DPI():
+        """Resolution scanned pages are rendered at before OCR."""
+        return int(os.getenv("OCR_DPI", "300"))
+
+    @staticmethod
+    def OCR_AUTO_ROTATE():
+        """Straighten quarter-turned scans before OCR."""
+        return os.getenv("OCR_AUTO_ROTATE", "true").lower() == "true"
+
+    @staticmethod
+    def OCR_PREPROCESS_PROFILE():
+        """Image clean-up profile: 'none', 'light', 'standard' or 'full'."""
+        return os.getenv("OCR_PREPROCESS_PROFILE", "light")
+
+    @staticmethod
+    def PDF_TEXT_MIN_CHARS_PER_PAGE():
+        """Characters a page's text layer must yield before OCR is skipped."""
+        return int(os.getenv("PDF_TEXT_MIN_CHARS_PER_PAGE", "100"))
+
+    @staticmethod
+    def PDF_TEXT_MIN_DIACRITIC_RATIO():
+        """Below this share of accented letters, a full-page-image PDF's text layer is
+        treated as a stale OCR pass and re-read. Vietnamese only."""
+        return float(os.getenv("PDF_TEXT_MIN_DIACRITIC_RATIO", "0.03"))
 
     @staticmethod
     def OCR_MAX_CONCURRENT_FILES():
         return int(os.getenv("OCR_MAX_CONCURRENT_FILES", "1"))
-
-    @staticmethod
-    def TESSERACT_CMD_EXISTS():
-        import shutil
-
-        return shutil.which(OCRConfig.TESSERACT_CMD()) is not None
-
-    @staticmethod
-    def get_config_by_name(config_name: str):
-        """Legacy method for backward compatibility."""
-        return {"name": config_name}
 
 
 class LoggingConfig:

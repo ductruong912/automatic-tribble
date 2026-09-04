@@ -11,7 +11,7 @@ from typing import Dict, Any, List
 
 # Local imports
 from config.settings import Config
-from ..processors.docling_processor import DoclingProcessor, AsyncDoclingProcessor
+from ..processors.docling_processor import DoclingProcessor
 from .file_manager import FileManager
 
 
@@ -24,7 +24,7 @@ class MainDocumentProcessor:
 
     SUPPORTED_EXTENSIONS = set(Config.File.ALLOWED_EXTENSIONS())
 
-    # Formats Docling cannot convert; handled by our own processors instead
+    # Formats Docling cannot convert; handled by our own processors
     NON_DOCLING_EXTENSIONS = {'.txt', '.csv', '.xlsx'}
 
     def __init__(
@@ -57,14 +57,6 @@ class MainDocumentProcessor:
             preprocessing_config=preprocessing_config
         )
         
-        # Create async wrapper for compatibility
-        self.async_processor = AsyncDoclingProcessor(
-            enable_ocr=False,  # OCR is now automatic based on file type
-            llm_client=llm_client,
-            llm_model=llm_model,
-            preprocessing_config=preprocessing_config
-        )
-        
         logger = __import__('logging').getLogger(__name__)
         logger.info(f"MainDocumentProcessor initialized with automatic OCR for PDFs, preprocessing config: {preprocessing_config}")
 
@@ -87,14 +79,13 @@ class MainDocumentProcessor:
             raise ValueError(f"Unsupported file type: {file_ext}")
 
         try:
-            # Formats Docling does not handle are routed to our own processors
             if file_ext in self.NON_DOCLING_EXTENSIONS:
                 if file_ext == '.txt':
                     from ..processors.processors import TextProcessor
                     processor = TextProcessor()
                     processor_version = "text_processor"
                 else:
-                    # Spreadsheets use a custom extractor that handles sheets separately
+                    # Spreadsheets: custom extractor, one chunk per sheet
                     from ..processors.processors import SpreadsheetProcessor
                     processor = SpreadsheetProcessor()
                     processor_version = "spreadsheet_processor"

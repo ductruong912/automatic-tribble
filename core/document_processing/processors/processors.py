@@ -10,15 +10,10 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
-from urllib.parse import urljoin, urlparse
 
 # Third-party imports
 import aiofiles
 import pandas as pd
-import PyPDF2
-import requests
-from bs4 import BeautifulSoup
-from docx import Document
 
 # Local imports
 from config.settings import Config

@@ -1,7 +1,6 @@
 # RAG Chatbot Dependencies
 # Domain-driven architecture with clear separation of concerns
 sentence-transformers==2.5.1
-beautifulsoup4==4.12.3
 fastapi==0.115.6
 numpy==1.26.4
 openai==1.57.0
@@ -23,7 +22,12 @@ httpx==0.27.0
 faiss-cpu==1.8.0
 h5py==3.10.0
 redis==5.0.1
-PyPDF2==3.0.1
 streamlit==1.37.1
 huggingface_hub[hf_xet]==0.33.1
 pypdfium2==4.30.0
+# OCR pipeline for scanned PDFs (pluggable engines, see OCR_ENGINE)
+easyocr==1.7.2
+rapidocr==3.9.2
+onnxruntime==1.29.0
+opencv-python-headless==4.11.0.86
+pymupdf==1.28.2

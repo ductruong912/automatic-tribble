@@ -8,7 +8,7 @@ from .processors import (
     TextProcessor,
     SpreadsheetProcessor,
 )
-from .docling_processor import DoclingProcessor, AsyncDoclingProcessor
+from .docling_processor import DoclingProcessor
 from .preprocessing import PreprocessingMethod, PreprocessingConfig, DocumentPreprocessor
 
 __all__ = [
@@ -16,7 +16,6 @@ __all__ = [
     "TextProcessor",
     "SpreadsheetProcessor",
     "DoclingProcessor",
-    "AsyncDoclingProcessor",
     "PreprocessingMethod",
     "PreprocessingConfig",
     "DocumentPreprocessor",

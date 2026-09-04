@@ -1,6 +1,6 @@
 # RAG Chatbot
 
-A modular Retrieval-Augmented Generation (RAG) chatbot for intelligent Q&A over your documents. Upload files and chat with your data using AI. **Now powered by Docling with embedded EasyOCR for superior document conversion to Markdown format.**
+A modular Retrieval-Augmented Generation (RAG) chatbot for intelligent Q&A over your documents. Upload files and chat with your data using AI. **Powered by Docling for document conversion, with a pluggable OCR pipeline for scanned PDFs.**
 
 ## Architecture
 
@@ -27,8 +27,9 @@ This project follows a **domain-driven design** approach with clear separation o
 ## Features
 
 - **Multi-format Support:** PDF, DOCX, DOC, TXT, CSV, XLSX, XLS, PPTX, PPT, Images, Audio, EPUB, ZIP
-- **Docling Integration:** Superior document conversion to LLM-friendly Markdown format with embedded EasyOCR
-- **Embedded OCR:** Docling's built-in EasyOCR for seamless text extraction
+- **Docling Integration:** Document conversion to LLM-friendly Markdown format
+- **Scan-aware PDF handling:** Pages are classified per page - a real text layer is read directly, only scanned pages go through OCR
+- **Pluggable OCR:** Switch engines with `OCR_ENGINE` (`easyocr` for Vietnamese accuracy, `rapidocr` for speed); models download automatically, no external binary to install
 - **RAG-Powered Chat:** Context-aware answers from your knowledge base
 - **Hybrid Search:** Combines semantic and keyword search
 - **Query Expansion:** Improves retrieval with automatic query variations
@@ -256,11 +257,24 @@ See `.env.example` for a complete list of available configuration options.
 - **Linux**: `gcc`, `g++`, `libgl1-mesa-glx`, `poppler-utils`
 - **macOS**: Xcode Command Line Tools
 
-### Optional Dependencies
-- **Tesseract OCR**: For advanced OCR processing
-  - Windows: Download from [GitHub](https://github.com/UB-Mannheim/tesseract/wiki)
-  - Linux: `sudo apt-get install tesseract-ocr`
-  - macOS: `brew install tesseract`
+### OCR
+No external OCR binary is required. Both engines ship as Python packages and
+download their models on first use.
+
+Measured on real Vietnamese scans (a contract price table and a delivery note):
+
+| `OCR_ENGINE` | Vietnamese prose | Figures in a price table | Speed per A4 page (CPU) |
+|--------------|------------------|--------------------------|--------------------------|
+| `easyocr` (default) | 22/33 phrases | 14/19 | ~38s |
+| `rapidocr` (PP-OCRv6) | 1/33 phrases | 19/19 | ~7s |
+
+`easyocr` is the default because PP-OCRv6 deletes the letters that carry tone
+marks - "thiet ke" comes out as "thit k", which neither a reader nor the
+accent-stripped BM25 index can match. Switch to `rapidocr` for forms, invoices
+and price tables, where its figures are better and it is five times faster.
+
+Installing a CUDA build of PyTorch lets `easyocr` use the GPU; `OCR_GPU=auto`
+picks it up with no further configuration.
 
 ---
 

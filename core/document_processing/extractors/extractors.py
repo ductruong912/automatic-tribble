@@ -9,11 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def smart_chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list:
-    """
-    Chunk free-form text on sentence boundaries.
-    Delegates to TextUtils.chunk_text so plain text uses the same chunker as the rest
-    of the pipeline (Vietnamese-aware sentence splitting).
-    """
+    """Chunk free-form text on sentence boundaries (Vietnamese-aware)."""
     from utils.text_processing.text_utils import TextUtils
 
     if not text or not text.strip():
@@ -23,9 +19,8 @@ def smart_chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> l
 
 def smart_chunk_rows(rows: list, chunk_size: int = 1000, header: str = "") -> list:
     """
-    Group tabular rows into chunks without ever splitting a row.
-    The header line is repeated at the top of every chunk so each chunk stays
-    self-describing when retrieved on its own.
+    Group rows into chunks without splitting a row.
+    The header is repeated in every chunk so each stays self-describing.
     """
     rows = [r for r in rows if r and r.strip()]
     if not rows:
@@ -38,7 +33,7 @@ def smart_chunk_rows(rows: list, chunk_size: int = 1000, header: str = "") -> li
 
     for row in rows:
         row_len = len(row) + 1  # +1 for the newline
-        # Start a new chunk once this row would overflow, but never emit an empty one
+        # New chunk on overflow, but never an empty one
         if current and current_len + row_len > chunk_size:
             chunks.append(prefix + "\n".join(current))
             current = []
