@@ -1,22 +1,16 @@
 """
-Health check and system status endpoints for monitoring and diagnostics.
+Health check, performance and cache endpoints for monitoring and diagnostics.
 """
 
 # Standard library imports
-import os
 import time
 
 # Third-party imports
-import psutil
 from fastapi import APIRouter, Depends
 
 # Local imports
-from setting import Config
 from models.responses import HealthResponse, StatusEnum
-from pydantic import BaseModel, Field
 from utils.performance import get_performance_monitor
-from utils.performance import get_background_manager
-from utils.performance import get_model_preloader
 from api.dependencies import get_chat_service
 
 router = APIRouter()
@@ -41,62 +35,6 @@ async def health_check():
         version="2.0.0",
         uptime=uptime_str,
     )
-
-
-class SystemStatusResponse(BaseModel):
-    status: str = Field(...)
-    version: str = Field(...)
-    uptime_seconds: int = Field(...)
-    system: dict = Field(...)
-    configuration: dict = Field(...)
-
-
-@router.get("/status", response_model=SystemStatusResponse)
-async def detailed_status():
-    """
-    Comprehensive system status endpoint with resource usage metrics.
-    Provides CPU, memory, disk usage and configuration details.
-    """
-    try:
-        # Get system resource information
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
-        return SystemStatusResponse(
-            status="healthy",
-            version="2.0.0",
-            uptime_seconds=int(time.time() - _start_time),
-            system={
-                "cpu_percent": psutil.cpu_percent(interval=1),
-                "memory": {
-                    "total": memory.total,
-                    "available": memory.available,
-                    "percent": memory.percent,
-                },
-                "disk": {
-                    "total": disk.total,
-                    "free": disk.free,
-                    "percent": (disk.used / disk.total) * 100,
-                },
-            },
-            configuration={
-                "host": Config.HOST(),
-                "port": Config.PORT(),
-                "debug": Config.DEBUG(),
-                "openai_model": Config.OPENAI_MODEL(),
-                "max_file_size": Config.MAX_FILE_SIZE(),
-                "chunks_dir": Config.CHUNKS_DIR(),
-                "vectors_dir": Config.VECTORS_DIR(),
-                "temp_dir": Config.TEMP_DIR(),
-            },
-        )
-    except Exception as e:
-        return SystemStatusResponse(
-            status="error",
-            version="2.0.0",
-            uptime_seconds=int(time.time() - _start_time),
-            system={},
-            configuration={},
-        )
 
 
 @router.get("/performance")

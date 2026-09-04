@@ -138,7 +138,6 @@ OPENAI_API_KEY=your_openai_api_key_here
 | Endpoint           | Method | Description                        |
 |--------------------|--------|------------------------------------|
 | `/`                | GET    | Health check                       |
-| `/status`          | GET    | System status                      |
 | `/performance`     | GET    | Performance metrics                |
 | `/cache-stats`     | GET    | Cache statistics                   |
 
