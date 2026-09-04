@@ -157,9 +157,20 @@ class MainDocumentProcessor:
         return list(self.SUPPORTED_EXTENSIONS)
 
     def is_format_supported(self, filename: str) -> bool:
-        """Check if a file format is supported."""
+        """
+        Check if a file format is supported.
+
+        Supported means: allowed by config, and some processor can read it - either
+        one of ours (.txt, .csv, .xlsx) or Docling. Requiring Docling for everything
+        would reject .txt, which Docling cannot convert but TextProcessor handles.
+        """
         extension = Path(filename).suffix.lower()
-        return extension in self.SUPPORTED_EXTENSIONS and self.docling_processor.is_format_supported(filename)
+        if extension not in self.SUPPORTED_EXTENSIONS:
+            return False
+        return (
+            extension in self.NON_DOCLING_EXTENSIONS
+            or self.docling_processor.is_format_supported(filename)
+        )
 
     def is_supported_file(self, filename: str) -> bool:
         """Check if a file is supported (alias for is_format_supported for compatibility)."""

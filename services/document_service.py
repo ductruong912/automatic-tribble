@@ -301,7 +301,7 @@ class DocumentService:
 
     def get_supported_extensions(self) -> List[str]:
         """Get list of supported file extensions."""
-        return self.processor.get_supported_extensions()
+        return self.processor.get_supported_formats()
 
     def is_supported_file(self, filename: str) -> bool:
         """Check if file type is supported."""

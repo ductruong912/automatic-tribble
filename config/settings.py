@@ -113,9 +113,19 @@ class FileConfig:
 
     @staticmethod
     def ALLOWED_EXTENSIONS():
-        return os.getenv(
-            "ALLOWED_EXTENSIONS", ".txt,.pdf,.docx,.csv,.xlsx"
-        ).split(",")
+        """
+        Allowed upload extensions, normalised to lowercase and dot-prefixed.
+        Without this, "ALLOWED_EXTENSIONS=.txt, .pdf" would silently reject every
+        entry after the first because of the leading space.
+        """
+        raw = os.getenv("ALLOWED_EXTENSIONS", ".txt,.pdf,.docx,.csv,.xlsx")
+        extensions = []
+        for item in raw.split(","):
+            item = item.strip().lower()
+            if not item:
+                continue
+            extensions.append(item if item.startswith(".") else f".{item}")
+        return extensions
 
     @staticmethod
     def MAX_FILES_PER_BATCH():
