@@ -250,10 +250,31 @@ class DocumentService:
         Updates vector store once with all successful documents to avoid repeated rebuilds.
         """
         if successful_documents and rebuild_at_end:
-            return self.vector_store.add_documents_batch(
+            updated = self.vector_store.add_documents_batch(
                 successful_documents, rebuild_at_end=True
             )
+            if updated:
+                self._publish_rebuilt_vector_store()
+            return updated
         return False
+
+    def _publish_rebuilt_vector_store(self):
+        """
+        Hand the freshly rebuilt store to the preloader.
+        Without this, chat keeps answering from the copy loaded at startup.
+        """
+        from utils.performance import get_model_preloader
+
+        preloader = get_model_preloader()
+        try:
+            preloader.refresh_vector_store(self.vector_store)
+        except Exception as e:
+            logger.error(f"Could not publish rebuilt vector store: {e}")
+            # Fall back to marking it stale so the next chat request reloads from disk
+            try:
+                preloader.invalidate_vector_store()
+            except Exception as inner:
+                logger.error(f"Could not invalidate preloaded vector store: {inner}")
 
     def _create_batch_response(
         self,

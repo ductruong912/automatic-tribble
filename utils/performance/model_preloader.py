@@ -5,6 +5,7 @@ Eliminates cold start delays and improves response times.
 
 import logging
 import asyncio
+import threading
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 import time
@@ -25,7 +26,12 @@ class ModelPreloader:
         self.loading_duration = 0
         self.loaded_models = {}
         self.loading_errors = {}
-        
+
+        # Vector store staleness tracking - the store changes whenever files are uploaded
+        self._vector_store_lock = threading.RLock()
+        self._vector_store_version = 0
+        self._vector_store_stale = False
+
     async def preload_all_models(self):
         """Preload all models concurrently for maximum speed."""
         if self.models_loaded:
@@ -119,24 +125,77 @@ class ModelPreloader:
             logger.info("🔄 Preloading vector store...")
             start_time = time.time()
             
-            from core.storage.vector_stores.vector_store_optimized import OptimizedVectorStore
-            vs = OptimizedVectorStore()
-            vector_store_data = vs.load_vector_store()
-            
+            with self._vector_store_lock:
+                self._load_vector_store_locked()
+
             load_time = time.time() - start_time
-            self.loaded_models["vector_store"] = {
-                "model": vs,
-                "data": vector_store_data,
-                "load_time": load_time,
-                "status": "success"
-            }
+            self.loaded_models["vector_store"]["load_time"] = load_time
             logger.info(f"Vector store loaded in {load_time:.2f}s")
-            
+
         except Exception as e:
             logger.error(f"Failed to preload vector store: {e}")
             self.loading_errors["vector_store"] = str(e)
             self.loaded_models["vector_store"] = {"status": "failed", "error": str(e)}
-    
+
+    def _load_vector_store_locked(self):
+        """Load the vector store from disk and cache it. Caller must hold the lock."""
+        from core.storage.vector_stores.vector_store_optimized import OptimizedVectorStore
+
+        vs = OptimizedVectorStore()
+        self.loaded_models["vector_store"] = {
+            "model": vs,
+            "data": vs.load_vector_store(),
+            "load_time": 0.0,
+            "status": "success",
+        }
+        self._vector_store_stale = False
+        self._vector_store_version += 1
+
+    def get_vector_store_version(self) -> int:
+        """Counter bumped on every vector store change; lets callers spot their own stale copies."""
+        with self._vector_store_lock:
+            return self._vector_store_version
+
+    def invalidate_vector_store(self):
+        """Mark the cached vector store stale so the next read reloads it from disk."""
+        with self._vector_store_lock:
+            self._vector_store_stale = True
+            self._vector_store_version += 1
+        logger.info("Vector store marked stale, will reload on next use")
+
+    def refresh_vector_store(self, vector_store=None) -> bool:
+        """
+        Replace the cached vector store right after a rebuild.
+
+        Pass the store that was just rebuilt to reuse its in-memory data;
+        without it the store is reloaded from disk.
+        """
+        with self._vector_store_lock:
+            try:
+                if vector_store is not None and vector_store.documents is not None:
+                    self.loaded_models["vector_store"] = {
+                        "model": vector_store,
+                        "data": (None, vector_store.embeddings, vector_store.documents),
+                        "load_time": 0.0,
+                        "status": "success",
+                    }
+                    self._vector_store_stale = False
+                    self._vector_store_version += 1
+                else:
+                    self._load_vector_store_locked()
+
+                self.loading_errors.pop("vector_store", None)
+                documents = self.loaded_models["vector_store"]["data"][2]
+                logger.info(
+                    f"Preloaded vector store refreshed: {len(documents) if documents else 0} documents"
+                )
+                return True
+            except Exception as e:
+                # Leave it stale so the next read retries from disk
+                self._vector_store_stale = True
+                logger.error(f"Failed to refresh preloaded vector store: {e}")
+                return False
+
     def get_model(self, model_name: str):
         """Get a preloaded model by name."""
         if model_name in self.loaded_models:
@@ -146,12 +205,19 @@ class ModelPreloader:
         return None
     
     def get_vector_store_data(self):
-        """Get preloaded vector store data."""
-        if "vector_store" in self.loaded_models:
-            model_data = self.loaded_models["vector_store"]
-            if model_data["status"] == "success":
+        """Get preloaded vector store data, reloading first if it went stale."""
+        with self._vector_store_lock:
+            if self._vector_store_stale:
+                try:
+                    self._load_vector_store_locked()
+                except Exception as e:
+                    logger.error(f"Failed to reload stale vector store: {e}")
+                    return None
+
+            model_data = self.loaded_models.get("vector_store")
+            if model_data and model_data["status"] == "success":
                 return model_data["data"]
-        return None
+            return None
     
     def _log_model_status(self):
         """Log the status of all loaded models."""

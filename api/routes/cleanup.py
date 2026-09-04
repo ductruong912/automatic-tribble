@@ -45,7 +45,11 @@ async def rebuild_vectors(
         
         # Rebuild the vector store from chunk files
         faiss_index, embeddings, documents = vector_store.rebuild_vector_store()
-        
+
+        # Publish the rebuilt store so chat stops serving the copy loaded at startup
+        from utils.performance import get_model_preloader
+        get_model_preloader().refresh_vector_store(vector_store)
+
         # Calculate processing time
         processing_time = time.time() - start_time
         processing_time_str = f"{processing_time:.2f}s"

@@ -48,6 +48,7 @@ class ChatService:
         self._vector_store_cache = None
         self._vector_store_last_loaded = 0
         self._vector_store_ttl = 300  # 5 minutes cache
+        self._vector_store_version = -1  # Preloader version this cache was built from
         
         # Use existing smart cache service
         self._smart_cache = get_cache_service()
@@ -56,24 +57,27 @@ class ChatService:
         self._performance_monitor = get_performance_monitor()
 
     def _get_cached_vector_store(self):
-        """Get cached vector store or load if expired."""
-        # Try to get preloaded vector store first
+        """Get the vector store, reloading whenever an upload has changed it."""
+        # Preloader owns the shared copy and reloads it after every rebuild
         preloader = get_model_preloader()
         preloaded_data = preloader.get_vector_store_data()
         if preloaded_data is not None:
             logger.debug("⚡ Using preloaded vector store")
             return preloaded_data
-        
-        # Fallback to cached loading
+
+        # Fallback: load here, expiring on TTL or on any vector store change
         current_time = time.time()
-        if (self._vector_store_cache is None or 
-            current_time - self._vector_store_last_loaded > self._vector_store_ttl):
+        version = preloader.get_vector_store_version()
+        if (self._vector_store_cache is None
+                or version != self._vector_store_version
+                or current_time - self._vector_store_last_loaded > self._vector_store_ttl):
             try:
                 # Use OptimizedVectorStore for better performance
                 from core.storage.vector_stores.vector_store_optimized import OptimizedVectorStore
                 vs = OptimizedVectorStore()
                 self._vector_store_cache = vs.load_vector_store()
                 self._vector_store_last_loaded = current_time
+                self._vector_store_version = version
                 logger.debug("🔄 Vector store cache refreshed")
             except Exception as e:
                 logger.error(f" Error loading vector store: {e}")
@@ -477,7 +481,8 @@ class ChatService:
             # Clear local vector store cache
             self._vector_store_cache = None
             self._vector_store_last_loaded = 0
-            
+            self._vector_store_version = -1
+
             logger.info("🧹 All caches cleared successfully")
             return {
                 "message": "All caches cleared successfully",
