@@ -24,6 +24,7 @@ configure_uvicorn_for_windows()
 
 # Local imports - Now import config classes after .env is loaded
 from api.routes import router
+from api.dependencies import init_services, shutdown_services
 from config.settings import Config
 from setting import validate_config
 from core.ai_services.embeddings.embeddings import get_embedding_service
@@ -121,17 +122,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Warmup failed: {e}")
 
+    # Build the shared services now so no request pays for model loading
+    try:
+        init_services()
+    except Exception as e:
+        logger.warning(f"Service initialization failed: {e}")
+
     logger.info("Chatbot started successfully\n")
     yield
     print("\nShutting down Chatbot...")
-    
+
+    # Release shared services
+    try:
+        await shutdown_services()
+    except Exception as e:
+        logger.warning(f"Error releasing services: {e}")
+
     # Stop background tasks
     try:
         await stop_background_tasks()
         logger.info("Background tasks stopped")
     except Exception as e:
         logger.warning(f"Error stopping background tasks: {e}")
-    
+
     print(" Shutdown completed. Goodbye!")
     logger.info("Chatbot shutdown complete")
 

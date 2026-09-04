@@ -24,23 +24,25 @@ class ContextRetriever:
     Combines semantic embeddings and keyword search (BM25) for optimal retrieval.
     """
 
-    def __init__(self, embedding_service=None, similarity_calculator=None):
+    def __init__(self, embedding_service=None, similarity_calculator=None, reranker=None):
         # Initialize core components for search and similarity calculation
         if embedding_service is None:
             self.embedding_service = get_embedding_service()
         else:
             self.embedding_service = embedding_service
-        
+
         self.vector_store = OptimizedVectorStore()  # Use optimized vector store with FAISS/HDF5
         if similarity_calculator is None:
             self.similarity_calculator = SimilarityCalculator()
         else:
             self.similarity_calculator = similarity_calculator
-        # Only initialize reranker if enabled
-        if Config.RAG.RERANKING_ENABLED():
-            self.reranker = Reranker()
-        else:
+        # Only initialize reranker if enabled; reuse the caller's to avoid a second model load
+        if not Config.RAG.RERANKING_ENABLED():
             self.reranker = None
+        elif reranker is not None:
+            self.reranker = reranker
+        else:
+            self.reranker = Reranker()
 
         # Best-effort: load query adapter once at initialization
         try:

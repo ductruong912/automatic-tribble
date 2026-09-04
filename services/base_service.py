@@ -31,9 +31,12 @@ class BaseProcessingService(ABC):
     Provides common functionality for file uploads, URL processing, and document management.
     """
 
-    def __init__(self):
-        # Initialize document service for processing capabilities
-        self.document_service = DocumentService()
+    def __init__(self, document_service: DocumentService = None):
+        # Share the caller's document service; building one here would rebuild
+        # the whole Docling pipeline on every upload
+        self.document_service = (
+            document_service if document_service is not None else DocumentService()
+        )
 
     async def process_items(
         self, items: List[Union[str, Any]], item_type: str = "items"

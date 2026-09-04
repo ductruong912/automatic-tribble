@@ -4,7 +4,6 @@ from typing import Dict, Any, Optional, List, AsyncGenerator
 import time
 from datetime import datetime
 import numpy as np
-import asyncio
 
 # Local imports
 from core.ai_services import ChatbotService
@@ -34,8 +33,9 @@ class ChatService:
             self.chatbot_service = ChatbotService()
         else:
             self.chatbot_service = chatbot_service
-        self.request_history = []
-        self._history_lock = asyncio.Lock()
+        # No process-wide conversation history: the service is shared by every
+        # caller, so a single list would mix one user's conversation into another's
+        # prompt. History must come from the request.
         self.service_metrics = {
             "total_requests": 0,
             "successful_requests": 0,
@@ -207,12 +207,8 @@ class ChatService:
                     context = ""
                     search_results = []
 
-            # Prepare history (lock only around shared history access)
-            if custom_history is not None:
-                history = custom_history[-Config.LLM.LLM_HISTORY_LENGTH() :]
-            else:
-                async with self._history_lock:
-                    history = self.request_history[-Config.LLM.LLM_HISTORY_LENGTH() :]
+            # History comes from the caller only - see __init__
+            history = custom_history[-Config.LLM.LLM_HISTORY_LENGTH():] if custom_history else []
 
             # Generate response using the same context for both modes
             try:
@@ -266,17 +262,7 @@ class ChatService:
                     confidence_details = result.get("confidence_details", {})
                     search_results = result.get("search_results", {})
                     is_cached = result.get("cached", False)
-                # Update global history (append user and assistant turns)
-                if custom_history is None:
-                    async with self._history_lock:
-                        self.request_history.append({"role": "user", "content": query})
-                        self.request_history.append(
-                            {"role": "assistant", "content": response_text}
-                        )
-                        # Trim to max history length
-                        self.request_history = self.request_history[
-                            -(Config.LLM.LLM_HISTORY_LENGTH() * 2) :
-                        ]
+                # The turn is not stored server side - the caller owns the conversation
                 return BaseResponse(
                     status=StatusEnum.SUCCESS,
                     response=response_text,
@@ -466,7 +452,6 @@ class ChatService:
             "average_response_time": 0.0,
             "service_start_time": datetime.now().isoformat(),
         }
-        self.request_history.clear()
 
     def clear_cache(self) -> Dict[str, Any]:
         """Clear all caches including smart cache and local caches."""
@@ -560,12 +545,10 @@ class ChatService:
                 current_embeddings = np.array([])
             elif isinstance(current_embeddings, list):
                 current_embeddings = np.array(current_embeddings)
-        # Prepare history
-        if custom_history is not None:
-            history = custom_history[-Config.LLM.LLM_HISTORY_LENGTH() :]
-        else:
-            async with self._history_lock:
-                history = self.request_history[-Config.LLM.LLM_HISTORY_LENGTH() :]
+        # History comes from the caller only. The service is shared across every
+        # request, so falling back to a process-wide list would mix conversations
+        # between users.
+        history = custom_history[-Config.LLM.LLM_HISTORY_LENGTH():] if custom_history else []
         # Note: Don't add current query to history here - it will be added in stream_response_with_history
         # Stream response from chatbot_service
         async for token in self.chatbot_service.stream_response_with_history(

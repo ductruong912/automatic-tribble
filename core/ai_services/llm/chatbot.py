@@ -7,12 +7,11 @@ import logging
 import time
 import asyncio
 import hashlib
+import threading
 from typing import Dict, Any, List, Optional, AsyncGenerator, Union, cast
 from ...infrastructure.caching.cache_service import get_cache_service
-import httpx
 import openai
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError
-from httpx import Limits
 from openai.types.chat import ChatCompletionMessageParam
 
 from config.settings import Config
@@ -53,29 +52,30 @@ class ChatbotService:
         self._cache_hits = 0
         self._cache_misses = 0
         self._cache_access_times = {}  # Track access times for LRU
-        
+        self._cache_lock = threading.Lock()  # The service is shared across requests
+
         # Initialize async OpenAI client
         self.async_openai_client = AsyncOpenAI(api_key=Config.LLM.OPENAI_API_KEY())
-        
-        # Initialize HTTP client with connection pooling for better performance
-        self._http_client = httpx.Client(
-            limits=Limits(
-                max_keepalive_connections=20,
-                max_connections=100,
-                keepalive_expiry=30.0
-            ),
-            timeout=httpx.Timeout(30.0)
-        )
-        
+
         # Initialize thread pool workers
         self._max_workers = Config.LLM.LLM_MAX_WORKERS()
-        
-        # Test API availability on initialization
-        self._api_available = self._test_api()
+
+        # Assume usable when a key is configured; probe_api() confirms it at startup
+        self._api_available = bool(Config.LLM.OPENAI_API_KEY())
+        if not self._api_available:
+            logger.warning(" OpenAI API key not configured")
 
     @property
     def api_available(self) -> bool:
         """Check if the OpenAI API is available."""
+        return self._api_available
+
+    def probe_api(self) -> bool:
+        """
+        Check the OpenAI API once and record the result.
+        Called at startup - never from __init__, so building the service costs no network round trip.
+        """
+        self._api_available = self._test_api()
         return self._api_available
 
     def _test_api(self) -> bool:
@@ -319,39 +319,39 @@ class ChatbotService:
 
     def _get_cached_response(self, cache_key: str) -> Optional[str]:
         """Retrieve cached response if available and not expired based on TTL configuration."""
-        if cache_key in self._cache:
-            cached_data = self._cache[cache_key]
-            if time.time() - cached_data['timestamp'] < self._cache_ttl:
-                # Update access time for LRU
-                self._cache_access_times[cache_key] = time.time()
-                self._cache_hits += 1
-                return cached_data['response']
-            else:
-                del self._cache[cache_key]  # Remove expired
-                if cache_key in self._cache_access_times:
-                    del self._cache_access_times[cache_key]
-        self._cache_misses += 1
-        return None
+        with self._cache_lock:
+            if cache_key in self._cache:
+                cached_data = self._cache[cache_key]
+                if time.time() - cached_data['timestamp'] < self._cache_ttl:
+                    # Update access time for LRU
+                    self._cache_access_times[cache_key] = time.time()
+                    self._cache_hits += 1
+                    return cached_data['response']
+                else:
+                    self._cache.pop(cache_key, None)  # Remove expired
+                    self._cache_access_times.pop(cache_key, None)
+            self._cache_misses += 1
+            return None
 
     def _cache_response(self, cache_key: str, response: str):
         """Cache response with LRU eviction policy."""
-        # LRU: remove oldest if cache is full
-        if len(self._cache) >= Config.LLM.LLM_CACHE_MAX_ENTRIES():
-            if self._cache_access_times:
-                oldest_key = min(self._cache_access_times.keys(), key=lambda k: self._cache_access_times[k])
-                del self._cache[oldest_key]
-                del self._cache_access_times[oldest_key]
-            else:
-                # Fallback to timestamp-based removal
-                oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k]['timestamp'])
-                del self._cache[oldest_key]
-        
-        current_time = time.time()
-        self._cache[cache_key] = {
-            'response': response,
-            'timestamp': current_time
-        }
-        self._cache_access_times[cache_key] = current_time
+        with self._cache_lock:
+            # LRU: remove oldest if cache is full
+            if len(self._cache) >= Config.LLM.LLM_CACHE_MAX_ENTRIES():
+                if self._cache_access_times:
+                    oldest_key = min(self._cache_access_times, key=self._cache_access_times.get)
+                else:
+                    # Fallback to timestamp-based removal
+                    oldest_key = min(self._cache, key=lambda k: self._cache[k]['timestamp'])
+                self._cache.pop(oldest_key, None)
+                self._cache_access_times.pop(oldest_key, None)
+
+            current_time = time.time()
+            self._cache[cache_key] = {
+                'response': response,
+                'timestamp': current_time
+            }
+            self._cache_access_times[cache_key] = current_time
 
     def get_service_status(self) -> Dict[str, Any]:
         """Get simple service status."""
@@ -368,16 +368,20 @@ class ChatbotService:
             "cache_hit_rate": f"{hit_rate:.1f}%"
         }
     
-    def cleanup(self):
-        """Clean up resources and close connections."""
-        if hasattr(self, '_http_client'):
-            self._http_client.close()
+    async def aclose(self):
+        """Close the OpenAI client. Called once at shutdown."""
+        try:
+            await self.async_openai_client.close()
+        except Exception as e:
+            logger.warning(f"Error closing OpenAI client: {e}")
         logger.info("ChatbotService cleanup completed")
     
     def clear_cache(self) -> Dict[str, Any]:
         """Clear the response cache."""
-        cache_size = len(self._cache)
-        self._cache.clear()
+        with self._cache_lock:
+            cache_size = len(self._cache)
+            self._cache.clear()
+            self._cache_access_times.clear()
         logger.info(f"🧹 Cache cleared: {cache_size} entries removed")
         return {
             "message": "Cache cleared successfully",
