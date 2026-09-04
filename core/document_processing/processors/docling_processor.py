@@ -103,14 +103,64 @@ class DoclingProcessor:
         return self._scanned_extractor
 
     async def _get_normal_converter(self):
-        """Get or create normal converter (thread-safe)."""
+        """Get or create normal converter (thread-safe). Building it loads models, so keep it off the loop."""
         if self._normal_converter is None:
             async with self._converter_lock:
                 if self._normal_converter is None:
                     logger.info("Initializing normal converter...")
-                    self._normal_converter = DocumentConverter()
+                    self._normal_converter = await asyncio.to_thread(DocumentConverter)
                     logger.info(" Normal converter initialized and cached")
         return self._normal_converter
+
+    def _extract_text(self, content: bytes, suffix: str, pdf_profile, converter) -> Dict[str, Any]:
+        """
+        Convert or OCR one document.
+
+        Blocking from start to finish - always call it through a worker thread so a
+        multi-minute OCR run cannot freeze the whole server.
+        """
+        temp_path = None
+        try:
+            # Write to a temp file for Docling to consume
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_file.write(content)
+                temp_path = Path(temp_file.name)
+
+            if pdf_profile is not None and not pdf_profile.is_fully_text:
+                # Mixed or scanned: read text pages directly, OCR the rest.
+                logger.info(
+                    f"PDF needs OCR on {len(pdf_profile.scan_pages)} of {pdf_profile.page_count} pages"
+                )
+                result = self._get_scanned_extractor().extract(content, profile=pdf_profile)
+                return {
+                    "text": result["text"],
+                    "ocr_pages": result["ocr_pages"],
+                    "engine": result["engine"],
+                    "preprocess_profile": result["preprocess_profile"],
+                }
+
+            if pdf_profile is not None:
+                # Docling reconstructs tables and headings better than raw text.
+                logger.info(
+                    f"PDF has a text layer on every page ({pdf_profile.summary()}); skipping OCR"
+                )
+            else:
+                logger.info(f"Processing {suffix} file with normal extraction")
+
+            doc = converter.convert(str(temp_path)).document
+            return {
+                "text": doc.export_to_markdown(),
+                "ocr_pages": [],
+                "engine": None,
+                "preprocess_profile": None,
+            }
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            self._clear_memory_caches()
 
     async def process_document(
         self,
@@ -119,56 +169,36 @@ class DoclingProcessor:
     ) -> Dict[str, Any]:
         """
         Process document content using Docling with simple OCR configuration.
-        Uses the exact same approach as the test file for optimal OCR quality.
+        Conversion and OCR run in a worker thread so the API keeps answering during an upload.
         """
         start_time = time.time()
         if DocumentConverter is None:
             raise RuntimeError("Docling DocumentConverter is not available. Install 'docling'.")
 
-        # Write to a temp file for Docling to consume
         suffix = Path(filename).suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            temp_file.write(content)
-            temp_path = Path(temp_file.name)
-
-        text_md: str = ""
-        ocr_used: bool = False
-        pdf_profile = None
-        ocr_pages: List[int] = []
-        ocr_engine_name: Optional[str] = None
-        preprocess_profile: Optional[str] = None
+        is_pdf = suffix.lower() == '.pdf'
 
         try:
-            # Determine processing method based on file type
-            is_pdf = suffix.lower() == '.pdf'
-            
+            # Classification parses every page, so it goes to a thread as well
+            pdf_profile = None
             if is_pdf:
                 from ..pdf_classifier import classify_pdf
 
-                pdf_profile = classify_pdf(content)
+                pdf_profile = await asyncio.to_thread(classify_pdf, content)
 
-                if pdf_profile.is_fully_text:
-                    # Docling reconstructs tables and headings better than raw text.
-                    logger.info(f"PDF has a text layer on every page ({pdf_profile.summary()}); skipping OCR")
-                    converter = await self._get_normal_converter()
-                    doc = converter.convert(str(temp_path)).document
-                    text_md = doc.export_to_markdown()
-                else:
-                    # Mixed or scanned: read text pages directly, OCR the rest.
-                    logger.info(f"PDF needs OCR on {len(pdf_profile.scan_pages)} of {pdf_profile.page_count} pages")
-                    result = self._get_scanned_extractor().extract(content, profile=pdf_profile)
-                    text_md = result["text"]
-                    ocr_pages = result["ocr_pages"]
-                    ocr_engine_name = result["engine"]
-                    preprocess_profile = result["preprocess_profile"]
-                    ocr_used = bool(ocr_pages)
-
-                    self._clear_memory_caches()
-            else:
+            # Only needed when Docling does the conversion, not on the OCR path
+            converter = None
+            if pdf_profile is None or pdf_profile.is_fully_text:
                 converter = await self._get_normal_converter()
-                doc = converter.convert(str(temp_path)).document
-                text_md = doc.export_to_markdown()
-                logger.info(f"Processing {suffix} file with normal extraction")
+
+            extracted = await asyncio.to_thread(
+                self._extract_text, content, suffix, pdf_profile, converter
+            )
+            text_md: str = extracted["text"]
+            ocr_pages: List[int] = extracted["ocr_pages"]
+            ocr_engine_name: Optional[str] = extracted["engine"]
+            preprocess_profile: Optional[str] = extracted["preprocess_profile"]
+            ocr_used: bool = bool(ocr_pages)
 
             # Heading-based chunking
             chunks = self._chunk_markdown_by_headings(text_md)
@@ -215,13 +245,7 @@ class DoclingProcessor:
         except Exception as e:
             logger.error(f"Docling processing failed for {filename}: {e}")
             raise
-        finally:
-            try:
-                temp_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            # Clear memory after processing
-            self._clear_memory_caches()
+        # Temp file removal and memory cleanup happen inside _extract_text
 
     def _chunk_markdown_by_headings(self, markdown_text: str) -> List[str]:
         """

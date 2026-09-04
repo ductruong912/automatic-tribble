@@ -3,6 +3,7 @@ Maintenance API endpoints for vector store rebuild and query adapter updates.
 """
 
 # Standard library imports
+import asyncio
 import logging
 from typing import Dict, Any
 
@@ -43,8 +44,11 @@ async def rebuild_vectors(
         logger.info("🔄 Starting vector store rebuild via cleanup API...")
         start_time = time.time()
         
-        # Rebuild the vector store from chunk files
-        faiss_index, embeddings, documents = vector_store.rebuild_vector_store()
+        # Rebuild the vector store from chunk files.
+        # Re-encoding every chunk blocks for a long time, so it runs in a worker thread.
+        faiss_index, embeddings, documents = await asyncio.to_thread(
+            vector_store.rebuild_vector_store
+        )
 
         # Publish the rebuilt store so chat stops serving the copy loaded at startup
         from utils.performance import get_model_preloader

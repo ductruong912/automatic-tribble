@@ -220,7 +220,7 @@ class DocumentService:
         logger.info(
             f"🔄 [DocumentService] Updating vector store with {len(successful_documents)} documents"
         )
-        vector_store_success = self._batch_update_vector_store(
+        vector_store_success = await self._batch_update_vector_store(
             successful_documents, rebuild_at_end
         )
 
@@ -242,16 +242,17 @@ class DocumentService:
         response["process_time"] = time.time() - start_time
         return response
 
-    def _batch_update_vector_store(
+    async def _batch_update_vector_store(
         self, successful_documents: List[Dict], rebuild_at_end: bool
     ) -> bool:
         """
         Handle batch vector store updates for efficiency.
         Updates vector store once with all successful documents to avoid repeated rebuilds.
+        Re-encoding every chunk is slow, so it runs in a worker thread.
         """
         if successful_documents and rebuild_at_end:
-            updated = self.vector_store.add_documents_batch(
-                successful_documents, rebuild_at_end=True
+            updated = await asyncio.to_thread(
+                self.vector_store.add_documents_batch, successful_documents, True
             )
             if updated:
                 self._publish_rebuilt_vector_store()
