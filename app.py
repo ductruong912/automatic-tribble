@@ -9,11 +9,32 @@ import requests
 import re
 import urllib3
 import base64
+from dotenv import load_dotenv
 from utils.file_operations import cleanup_data_folders
 
+load_dotenv()
+
+# Bot name for the browser tab and the header
+APP_TITLE = os.getenv("APP_TITLE", "ChatBot")
+
+
+def _streamlit_ssl_paths():
+    """Return TLS paths as resolved by the Streamlit server, or (None, None)."""
+    try:
+        from streamlit import config as st_config
+
+        return (
+            st_config.get_option("server.sslCertFile"),
+            st_config.get_option("server.sslKeyFile"),
+        )
+    except Exception:
+        return None, None
+
+
+SSL_CERT_FILE, SSL_KEY_FILE = _streamlit_ssl_paths()
 
 st.set_page_config(
-    page_title="ChatBot",
+    page_title=APP_TITLE,
     initial_sidebar_state="collapsed",
     layout="wide"
 )
@@ -279,529 +300,535 @@ class ChatApp:
         st.rerun()
 
     def run(self):
-    # Thêm logo và title cùng dòng, logo bo góc tròn, size nhỏ
-        logo_base64 = get_image_base64("assets/logo_tringhia.jpg")
-        if logo_base64:
+        # Optional logo; the UI below renders with or without it
+        logo_path = os.getenv("APP_LOGO_PATH", "assets/img/logo.png")
+        logo_base64 = get_image_base64(logo_path)
+        logo_mime = "image/png" if logo_path.lower().endswith(".png") else "image/jpeg"
+        logo_html = (
+            f'<img src="data:{logo_mime};base64,{logo_base64}" alt="Logo">'
+            if logo_base64
+            else ""
+        )
 
-            # Ẩn menu, header, footer của Streamlit
-            hide_streamlit_style = """
-                <style>
-                    #MainMenu {visibility: hidden;}
-                    footer {visibility: hidden;}
-                    header {visibility: hidden;}
-                    /* Ẩn icon 🔗 trong tiêu đề */
-                    h1 > a, h2 > a, h3 > a, h4 > a, h5 > a, h6 > a {
-                        display: none !important;
-                    }
-                    /* Fix iframe header to be fixed across entire page */
-                    iframe[height="90"] {
-                        position: fixed !important;
-                        top: 0 !important;
-                        left: 0 !important;
-                        right: 0 !important;
-                        width: 100vw !important;
-                        z-index: 9999 !important;
-                    }
-                </style>
-            """
-            st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-            # Header cố định trên cùng với buttons
-            st.components.v1.html(
-                f"""
-                <style>
-                    .chat-header {{
-                        position: fixed;
-                        /* Respect device/browser safe area (macOS titlebar / iOS notch / mobile browser UI) */
-                        top: env(safe-area-inset-top);
-                        left: 0;
-                        right: 0;
-                        width: 100vw;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        /* Add safe-area padding so header content isn't clipped */
-                        padding: calc(10px + env(safe-area-inset-top)) 15px 10px 15px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                        border-bottom: 1px solid rgba(255,255,255,0.08);
-                        z-index: 9999;
-                        /* Increase height to include safe-area inset */
-                        height: calc(55px + env(safe-area-inset-top));
-                        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-                        box-sizing: border-box;
-                    }}
-                    .header-left {{
-                        display: flex;
-                        align-items: center;
-                        gap: 12px;
-                    }}
-                    .header-right {{
-                        display: flex;
-                        align-items: center;
-                        gap: 6px;
-                    }}
-                    .chat-header img {{
-                        width: 36px;
-                        height: 36px;
-                        border-radius: 50%;
-                        object-fit: cover;
-                    }}
-                    .chat-header h2 {{
-                        margin: 0;
-                        color: white;
-                        font-size: 19px;
-                        font-weight: 700;
-                        letter-spacing: 0.3px;
-                    }}
-                    .header-btn {{
-                        background: transparent;
-                        border: none;
-                        border-radius: 8px;
-                        color: rgba(255,255,255,0.8);
-                        padding: 6px;
-                        font-size: 12px;
-                        cursor: pointer;
-                        transition: all 0.2s ease;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        min-width: 32px;
-                        height: 32px;
-                        outline: none;
-                    }}
-                    .header-btn:hover {{
-                        background: rgba(255,255,255,0.1);
-                        color: white;
-                        transform: translateY(-1px);
-                    }}
-                    .header-btn:active {{
-                        transform: translateY(0);
-                    }}
-                    .header-btn:focus {{
-                        outline: none;
-                        box-shadow: none;
-                    }}
-                    /* Đẩy phần nội dung chatbot xuống để không bị header che */
-                    .block-container {{
-                        /* Fallback static padding then prefer safe-area aware calc */
-                        padding-top: 60px !important;
-                        padding-top: calc(56px + env(safe-area-inset-top)) !important;
-                        padding-left: 10px !important;
-                        padding-right: 15px !important;
-                        padding-bottom: 10px !important;
-                        max-width: 100% !important;
-                    }}
-                </style>
-
-                <div class="chat-header">
-                    <div class="header-left">
-                        <img src="data:image/jpeg;base64,{logo_base64}" alt="Logo">
-                        <h2>ChatBot</h2>
-                    </div>
-                    <div class="header-right">
-                        <button class="header-btn fullscreen-btn" data-action="fullscreen" title="Toàn màn hình">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
-                                <polyline points="14,9 21,3 21,9"></polyline>
-                                <polyline points="21,15 14,21 14,15"></polyline>
-                                <polyline points="10,9 3,3 3,9"></polyline>
-                                <polyline points="3,15 10,21 10,15"></polyline>
-                            </svg>
-                        </button>
-                        <button class="header-btn close-btn" data-action="close" title="Đóng tạm thời">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="18" y1="6" x2="6" y2="18"></line>
-                                <line x1="6" y1="6" x2="18" y2="18"></line>
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-
-                <script>
-                    function toggleFullscreen() {{
-                        //console.log('toggleFullscreen called');
-                        
-                        // Always try to use PostMessage API first for iframe fullscreen
-                        if (window.top !== window) {{
-                            //console.log('Requesting fullscreen via PostMessage to parent');
-                            try {{
-                                window.top.postMessage({{
-                                    type: 'IFRAME_FULLSCREEN_REQUEST',
-                                    action: 'toggle',
-                                    iframeId: window.frameElement ? window.frameElement.id : null
-                                }}, '*');
-                                return; // Exit after sending message
-                            }} catch (error) {{
-                                //console.error('PostMessage failed:', error);
-                            }}
-                        }}
-                        
-                    }}
-
-                    function closeTemporarily() {{
-                        //console.log('closeTemporarily called');
-                        // Send message to parent to close/minimize the iframe
-                        if (window.top !== window) {{
-                            try {{
-                                window.top.postMessage({{
-                                    type: 'IFRAME_CONTROL',
-                                    action: 'close'
-                                }}, '*');
-                               // console.log('Sent close message to parent');
-                            }} catch (e) {{
-                               // console.log('Failed to send close message');
-                            }}
-                        }}
-                    }}
-
-                    // Auto-scroll to bottom during typing animation
-                    function scrollToBottom() {{
-                        var chatContainer = document.querySelector('.stChatMessageContainer');
-                        if (chatContainer) {{
-                            chatContainer.scrollTop = chatContainer.scrollHeight;
-                        }}
-                        // Also scroll main container
-                        window.scrollTo(0, document.body.scrollHeight);
-                    }}
-
-                    // Scroll when new content is added
-                    const observer = new MutationObserver(function(mutations) {{
-                        mutations.forEach(function(mutation) {{
-                            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {{
-                                setTimeout(scrollToBottom, 100);
-                            }}
-                        }});
-                    }});
-
-                    // Start observing when page loads
-                    document.addEventListener('DOMContentLoaded', function() {{
-                        const chatContainer = document.querySelector('.stChatMessageContainer');
-                        if (chatContainer) {{
-                            observer.observe(chatContainer, {{ childList: true, subtree: true }});
-                        }}
-
-                        // Bind button events using event delegation
-                        document.addEventListener('click', function(event) {{
-                            const button = event.target.closest('.header-btn');
-                            if (!button) return;
-
-                            const action = button.getAttribute('data-action');
-                            if (action === 'fullscreen') {{
-                                toggleFullscreen();
-                            }} else if (action === 'close') {{
-                                closeTemporarily();
-                            }}
-                        }});
-                    }});
-                </script>
-                """,
-                height=90
-            )
-
-            # Chat UI styling - aggressive approach to hide avatars and style messages
-            chat_ui_style = """
-                <style>
-                /* ===== ẨN ICON AVATAR =====*/
-                /* Ẩn avatar wrapper hoàn toàn */
-                [data-testid="stChatMessageAvatar"] {
-                    position: absolute !important;
-                    opacity: 0 !important;
-                    visibility: hidden !important;
-                    width: 0 !important;
-                    height: 0 !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                    pointer-events: none !important;
+        # Ẩn menu, header, footer của Streamlit
+        hide_streamlit_style = """
+            <style>
+                #MainMenu {visibility: hidden;}
+                footer {visibility: hidden;}
+                header {visibility: hidden;}
+                /* Ẩn icon 🔗 trong tiêu đề */
+                h1 > a, h2 > a, h3 > a, h4 > a, h5 > a, h6 > a {
                     display: none !important;
                 }
-
-                /* Che phủ icon bằng cách override parent */
-                div[data-testid="stChatMessage"] > div:first-child {
-                    min-width: 0 !important;
-                    width: 0 !important;
-                    height: 0 !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                    display: none !important;
+                /* Fix iframe header to be fixed across entire page */
+                iframe[height="90"] {
+                    position: fixed !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    right: 0 !important;
+                    width: 100vw !important;
+                    z-index: 9999 !important;
                 }
+            </style>
+        """
+        st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-                /* ===== STRUCTURE MESSAGES =====*/
-                /* Message container - full width, no padding */
-                [data-testid="stChatMessage"] {
-                    width: 100% !important;
-                    margin-bottom: 12px !important;
-                    padding: 0 !important;
-                    background: transparent !important;
-                }
-
-                /* Message content - the actual text box */
-                [data-testid="stChatMessageContent"] {
-                    width: 100% !important;
-                    display: block !important;
-                    font-size: 15px !important;
-                    line-height: 1.6 !important;
-                    word-wrap: break-word !important;
-                }
-                /* Bubble wrapper cho role-based styling */
-                .bubble {
-                    padding: 12px 16px !important;
-                    border-radius: 12px !important;
-                    word-wrap: break-word !important;
-                    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15) !important;
-                    max-width: 92% !important;
-                    clear: both !important;
-                }
-
-                /* User bubble: bên PHẢI, lavender */
-                .bubble.user {
-                    background: #f5f3ff !important;
-                    color: #1e1e1e !important;
-                    border-radius: 12px 12px 0 12px !important;
-                    box-shadow: 0 2px 8px rgba(85, 99, 209, 0.15) !important;
-                    float: right !important;
-                    margin-left: 8% !important;
-                    margin-bottom: 8px !important;
-                    font-size: 15px !important;
-                }
-
-                /* Assistant bubble: bên TRÁI, tím */
-                .bubble.assistant {
-                    background: linear-gradient(135deg, #5563d1 0%, #6b3fa0 100%) !important;
-                    color: white !important;
-                    border-radius: 12px 12px 12px 0 !important;
-                    box-shadow: 0 2px 8px rgba(85, 99, 209, 0.3) !important;
-                    float: left !important;
-                    margin-right: 8% !important;
-                    margin-bottom: 8px !important;
-                    font-size: 15px !important;
-                }
-
-                /* ===== INPUT STYLING =====*/
-                [data-testid="stChatInputContainer"] {
-                    background: white !important;
-                    padding: 4px 20px !important;
-                    border-radius: 12px !important;
-                    border: 1px solid #e0e7ff !important;
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
-                }
-
-                [data-testid="stChatInputTextarea"] {
-                    background-color: white !important;
-                    color: #333 !important;
-                    border: none !important;
-                    border-radius: 8px !important;
-                    padding: 6px 10px !important;
-                    font-size: 15px !important;
-                }
-
-                /* ===== TEXT STYLING =====*/
-                p, span {
-                    word-break: break-word !important;
-                    overflow-wrap: break-word !important;
-                }
-
-                a {
-                    color: #667eea !important;
-                    text-decoration: underline !important;
-                }
-
-                a:hover {
-                    color: #764ba2 !important;
-                }
-
-                /* Đảm bảo text trong tin nhắn user cũng rõ */
-                .bubble.user p,
-                .bubble.user span,
-                .bubble.user div,
-                .bubble.user h1,
-                .bubble.user h2,
-                .bubble.user h3,
-                .bubble.user h4,
-                .bubble.user h5,
-                .bubble.user h6,
-                .bubble.user strong,
-                .bubble.user b {
-                    color: #1e1e1e !important;
-                }
-
-                .bubble.user a {
-                    color: #667eea !important;
-                }
-
-                /* Đảm bảo text và link luôn hiển thị trong tin nhắn bot */
-                .bubble.assistant p,
-                .bubble.assistant span,
-                .bubble.assistant div,
-                .bubble.assistant h1,
-                .bubble.assistant h2,
-                .bubble.assistant h3,
-                .bubble.assistant h4,
-                .bubble.assistant h5,
-                .bubble.assistant h6,
-                .bubble.assistant strong,
-                .bubble.assistant b {
-                    color: white !important;
-                }
-
-                .bubble.assistant a {
-                    color: #fff !important;
-                    text-decoration: underline !important;
-                    font-weight: 600 !important;
-                }
-
-                /* Ensure proper container width */
-                .stChatMessageContainer {
-                    display: flex !important;
-                    flex-direction: column !important;
-                    width: 100% !important;
-                    padding: 15px 0 !important;
-                }
-
-                /* Typing animation cursor */
-                .typing-cursor::after {
-                    content: '|';
-                    animation: blink 1.2s infinite;
-                    color: white;
-                    font-weight: bold;
-                    margin-left: 2px;
-                }
-
-                @keyframes blink {
-                    0%, 60% { opacity: 1; }
-                    61%, 100% { opacity: 0; }
-                }
-
-                /* Typing indicator */
-                .typing-indicator {
+        # Header cố định trên cùng với buttons
+        st.components.v1.html(
+            f"""
+            <style>
+                .chat-header {{
+                    position: fixed;
+                    /* Respect device/browser safe area (macOS titlebar / iOS notch / mobile browser UI) */
+                    top: env(safe-area-inset-top);
+                    left: 0;
+                    right: 0;
+                    width: 100vw;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    /* Add safe-area padding so header content isn't clipped */
+                    padding: calc(10px + env(safe-area-inset-top)) 15px 10px 15px;
                     display: flex;
                     align-items: center;
-                    gap: 1px;
+                    justify-content: space-between;
+                    border-bottom: 1px solid rgba(255,255,255,0.08);
+                    z-index: 9999;
+                    /* Increase height to include safe-area inset */
+                    height: calc(55px + env(safe-area-inset-top));
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+                    box-sizing: border-box;
+                }}
+                .header-left {{
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }}
+                .header-right {{
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                }}
+                .chat-header img {{
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 50%;
+                    object-fit: cover;
+                }}
+                .chat-header h2 {{
+                    margin: 0;
                     color: white;
-                    font-style: italic;
-                }
-
-                .dots {
-                    display: inline-block;
-                }
-
-                .dots::after {
-                    content: '';
-                    animation: dots 1.5s infinite;
-                    font-size: 16px;
-                }
-
-                @keyframes dots {
-                    0%, 20% { content: ''; }
-                    40% { content: '.'; }
-                    60% { content: '..'; }
-                    80%, 100% { content: '...'; }
-                }
-
-                /* Fullscreen fixes */
-                :fullscreen {
-                    background: #ffffff !important;
-                }
-
-                :fullscreen body {
-                    background: #ffffff !important;
-                    color: #000000 !important;
-                }
-
-                :fullscreen .stApp {
-                    background: #ffffff !important;
-                    display: block !important;
-                    visibility: visible !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                }
-
-                :fullscreen .main {
-                    display: block !important;
-                    visibility: visible !important;
-                }
-
-                :fullscreen .block-container {
-                    display: block !important;
-                    visibility: visible !important;
-                }
-
-                :fullscreen [data-testid="stChatMessage"] {
-                    display: block !important;
-                    visibility: visible !important;
-                }
-
-                :fullscreen .stChatMessageContainer {
-                    display: block !important;
-                    visibility: visible !important;
-                }
-
-                :fullscreen * {
-                    opacity: 1 !important;
-                    visibility: visible !important;
-                    color: inherit !important;
-                    display: block !important;
-                }
-
-                /* CSS-based fullscreen simulation */
-                .fullscreen-mode {
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    z-index: 9999 !important;
-                    background: white !important;
-                    overflow: auto !important;
-                }
-
-                .fullscreen-mode .stApp {
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    z-index: 9999 !important;
-                    background: white !important;
-                    overflow: auto !important;
-                }
-
-                .fullscreen-mode iframe {
-                    z-index: 10000 !important;
-                }
-
-                .fullscreen-mode * {
-                    visibility: visible !important;
-                    opacity: 1 !important;
-                    color: inherit !important;
-                }
-
-                .fullscreen-mode .block-container {
-                    /* Reserve space for the overlay header in simulated fullscreen. Use fallback then safe-area-aware calc. */
-                    padding-top: 56px !important;
+                    font-size: 19px;
+                    font-weight: 700;
+                    letter-spacing: 0.3px;
+                }}
+                .header-btn {{
+                    background: transparent;
+                    border: none;
+                    border-radius: 8px;
+                    color: rgba(255,255,255,0.8);
+                    padding: 6px;
+                    font-size: 12px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    min-width: 32px;
+                    height: 32px;
+                    outline: none;
+                }}
+                .header-btn:hover {{
+                    background: rgba(255,255,255,0.1);
+                    color: white;
+                    transform: translateY(-1px);
+                }}
+                .header-btn:active {{
+                    transform: translateY(0);
+                }}
+                .header-btn:focus {{
+                    outline: none;
+                    box-shadow: none;
+                }}
+                /* Đẩy phần nội dung chatbot xuống để không bị header che */
+                .block-container {{
+                    /* Fallback static padding then prefer safe-area aware calc */
+                    padding-top: 60px !important;
                     padding-top: calc(56px + env(safe-area-inset-top)) !important;
-                }
-                
-                section .block-container {
-                    padding: 2rem 1rem 1rem !important;
-                }
-                
-                section .st-emotion-cache-qdbtli.ea3mdgi2 {
-                    padding: 1rem 1rem 20px !important;
-                }
-                
-                </style>
-            """
-            st.markdown(chat_ui_style, unsafe_allow_html=True)
-        else:
-            st.header("ChatBot")
+                    padding-left: 10px !important;
+                    padding-right: 15px !important;
+                    padding-bottom: 10px !important;
+                    max-width: 100% !important;
+                }}
+            </style>
+
+            <div class="chat-header">
+                <div class="header-left">
+                    {logo_html}
+                    <h2>{APP_TITLE}</h2>
+                </div>
+                <div class="header-right">
+                    <button class="header-btn fullscreen-btn" data-action="fullscreen" title="Toàn màn hình">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            <polyline points="14,9 21,3 21,9"></polyline>
+                            <polyline points="21,15 14,21 14,15"></polyline>
+                            <polyline points="10,9 3,3 3,9"></polyline>
+                            <polyline points="3,15 10,21 10,15"></polyline>
+                        </svg>
+                    </button>
+                    <button class="header-btn close-btn" data-action="close" title="Đóng tạm thời">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <script>
+                function toggleFullscreen() {{
+                    //console.log('toggleFullscreen called');
+                    
+                    // Always try to use PostMessage API first for iframe fullscreen
+                    if (window.top !== window) {{
+                        //console.log('Requesting fullscreen via PostMessage to parent');
+                        try {{
+                            window.top.postMessage({{
+                                type: 'IFRAME_FULLSCREEN_REQUEST',
+                                action: 'toggle',
+                                iframeId: window.frameElement ? window.frameElement.id : null
+                            }}, '*');
+                            return; // Exit after sending message
+                        }} catch (error) {{
+                            //console.error('PostMessage failed:', error);
+                        }}
+                    }}
+                    
+                }}
+
+                function closeTemporarily() {{
+                    //console.log('closeTemporarily called');
+                    // Send message to parent to close/minimize the iframe
+                    if (window.top !== window) {{
+                        try {{
+                            window.top.postMessage({{
+                                type: 'IFRAME_CONTROL',
+                                action: 'close'
+                            }}, '*');
+                           // console.log('Sent close message to parent');
+                        }} catch (e) {{
+                           // console.log('Failed to send close message');
+                        }}
+                    }}
+                }}
+
+                // Auto-scroll to bottom during typing animation
+                function scrollToBottom() {{
+                    var chatContainer = document.querySelector('.stChatMessageContainer');
+                    if (chatContainer) {{
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    }}
+                    // Also scroll main container
+                    window.scrollTo(0, document.body.scrollHeight);
+                }}
+
+                // Scroll when new content is added
+                const observer = new MutationObserver(function(mutations) {{
+                    mutations.forEach(function(mutation) {{
+                        if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {{
+                            setTimeout(scrollToBottom, 100);
+                        }}
+                    }});
+                }});
+
+                // Start observing when page loads
+                document.addEventListener('DOMContentLoaded', function() {{
+                    const chatContainer = document.querySelector('.stChatMessageContainer');
+                    if (chatContainer) {{
+                        observer.observe(chatContainer, {{ childList: true, subtree: true }});
+                    }}
+
+                    // Bind button events using event delegation
+                    document.addEventListener('click', function(event) {{
+                        const button = event.target.closest('.header-btn');
+                        if (!button) return;
+
+                        const action = button.getAttribute('data-action');
+                        if (action === 'fullscreen') {{
+                            toggleFullscreen();
+                        }} else if (action === 'close') {{
+                            closeTemporarily();
+                        }}
+                    }});
+                }});
+            </script>
+            """,
+            height=90
+        )
+
+        # Chat UI styling - aggressive approach to hide avatars and style messages
+        chat_ui_style = """
+            <style>
+            /* ===== ẨN ICON AVATAR =====*/
+            /* Ẩn avatar wrapper hoàn toàn */
+            [data-testid="stChatMessageAvatar"] {
+                position: absolute !important;
+                opacity: 0 !important;
+                visibility: hidden !important;
+                width: 0 !important;
+                height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                pointer-events: none !important;
+                display: none !important;
+            }
+
+            /* Che phủ icon bằng cách override parent */
+            div[data-testid="stChatMessage"] > div:first-child {
+                min-width: 0 !important;
+                width: 0 !important;
+                height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                display: none !important;
+            }
+
+            /* ===== STRUCTURE MESSAGES =====*/
+            /* Message container - full width, no padding */
+            [data-testid="stChatMessage"] {
+                width: 100% !important;
+                margin-bottom: 12px !important;
+                padding: 0 !important;
+                background: transparent !important;
+            }
+
+            /* Message content - the actual text box */
+            [data-testid="stChatMessageContent"] {
+                width: 100% !important;
+                display: block !important;
+                font-size: 15px !important;
+                line-height: 1.6 !important;
+                word-wrap: break-word !important;
+            }
+            /* Bubble wrapper cho role-based styling */
+            .bubble {
+                padding: 12px 16px !important;
+                border-radius: 12px !important;
+                word-wrap: break-word !important;
+                box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15) !important;
+                max-width: 92% !important;
+                clear: both !important;
+            }
+
+            /* User bubble: bên PHẢI, lavender */
+            .bubble.user {
+                background: #f5f3ff !important;
+                color: #1e1e1e !important;
+                border-radius: 12px 12px 0 12px !important;
+                box-shadow: 0 2px 8px rgba(85, 99, 209, 0.15) !important;
+                float: right !important;
+                margin-left: 8% !important;
+                margin-bottom: 8px !important;
+                font-size: 15px !important;
+            }
+
+            /* Assistant bubble: bên TRÁI, tím */
+            .bubble.assistant {
+                background: linear-gradient(135deg, #5563d1 0%, #6b3fa0 100%) !important;
+                color: white !important;
+                border-radius: 12px 12px 12px 0 !important;
+                box-shadow: 0 2px 8px rgba(85, 99, 209, 0.3) !important;
+                float: left !important;
+                margin-right: 8% !important;
+                margin-bottom: 8px !important;
+                font-size: 15px !important;
+            }
+
+            /* ===== INPUT STYLING =====*/
+            [data-testid="stChatInputContainer"] {
+                background: white !important;
+                padding: 4px 20px !important;
+                border-radius: 12px !important;
+                border: 1px solid #e0e7ff !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+            }
+
+            [data-testid="stChatInputTextarea"] {
+                background-color: white !important;
+                color: #333 !important;
+                border: none !important;
+                border-radius: 8px !important;
+                padding: 6px 10px !important;
+                font-size: 15px !important;
+            }
+
+            /* ===== TEXT STYLING =====*/
+            p, span {
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+            }
+
+            a {
+                color: #667eea !important;
+                text-decoration: underline !important;
+            }
+
+            a:hover {
+                color: #764ba2 !important;
+            }
+
+            /* Đảm bảo text trong tin nhắn user cũng rõ */
+            .bubble.user p,
+            .bubble.user span,
+            .bubble.user div,
+            .bubble.user h1,
+            .bubble.user h2,
+            .bubble.user h3,
+            .bubble.user h4,
+            .bubble.user h5,
+            .bubble.user h6,
+            .bubble.user strong,
+            .bubble.user b {
+                color: #1e1e1e !important;
+            }
+
+            .bubble.user a {
+                color: #667eea !important;
+            }
+
+            /* Đảm bảo text và link luôn hiển thị trong tin nhắn bot */
+            .bubble.assistant p,
+            .bubble.assistant span,
+            .bubble.assistant div,
+            .bubble.assistant h1,
+            .bubble.assistant h2,
+            .bubble.assistant h3,
+            .bubble.assistant h4,
+            .bubble.assistant h5,
+            .bubble.assistant h6,
+            .bubble.assistant strong,
+            .bubble.assistant b {
+                color: white !important;
+            }
+
+            .bubble.assistant a {
+                color: #fff !important;
+                text-decoration: underline !important;
+                font-weight: 600 !important;
+            }
+
+            /* Ensure proper container width */
+            .stChatMessageContainer {
+                display: flex !important;
+                flex-direction: column !important;
+                width: 100% !important;
+                padding: 15px 0 !important;
+            }
+
+            /* Typing animation cursor */
+            .typing-cursor::after {
+                content: '|';
+                animation: blink 1.2s infinite;
+                color: white;
+                font-weight: bold;
+                margin-left: 2px;
+            }
+
+            @keyframes blink {
+                0%, 60% { opacity: 1; }
+                61%, 100% { opacity: 0; }
+            }
+
+            /* Typing indicator */
+            .typing-indicator {
+                display: flex;
+                align-items: center;
+                gap: 1px;
+                color: white;
+                font-style: italic;
+            }
+
+            .dots {
+                display: inline-block;
+            }
+
+            .dots::after {
+                content: '';
+                animation: dots 1.5s infinite;
+                font-size: 16px;
+            }
+
+            @keyframes dots {
+                0%, 20% { content: ''; }
+                40% { content: '.'; }
+                60% { content: '..'; }
+                80%, 100% { content: '...'; }
+            }
+
+            /* Fullscreen fixes */
+            :fullscreen {
+                background: #ffffff !important;
+            }
+
+            :fullscreen body {
+                background: #ffffff !important;
+                color: #000000 !important;
+            }
+
+            :fullscreen .stApp {
+                background: #ffffff !important;
+                display: block !important;
+                visibility: visible !important;
+                width: 100vw !important;
+                height: 100vh !important;
+            }
+
+            :fullscreen .main {
+                display: block !important;
+                visibility: visible !important;
+            }
+
+            :fullscreen .block-container {
+                display: block !important;
+                visibility: visible !important;
+            }
+
+            :fullscreen [data-testid="stChatMessage"] {
+                display: block !important;
+                visibility: visible !important;
+            }
+
+            :fullscreen .stChatMessageContainer {
+                display: block !important;
+                visibility: visible !important;
+            }
+
+            :fullscreen * {
+                opacity: 1 !important;
+                visibility: visible !important;
+                color: inherit !important;
+                display: block !important;
+            }
+
+            /* CSS-based fullscreen simulation */
+            .fullscreen-mode {
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                width: 100vw !important;
+                height: 100vh !important;
+                z-index: 9999 !important;
+                background: white !important;
+                overflow: auto !important;
+            }
+
+            .fullscreen-mode .stApp {
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                width: 100vw !important;
+                height: 100vh !important;
+                z-index: 9999 !important;
+                background: white !important;
+                overflow: auto !important;
+            }
+
+            .fullscreen-mode iframe {
+                z-index: 10000 !important;
+            }
+
+            .fullscreen-mode * {
+                visibility: visible !important;
+                opacity: 1 !important;
+                color: inherit !important;
+            }
+
+            .fullscreen-mode .block-container {
+                /* Reserve space for the overlay header in simulated fullscreen. Use fallback then safe-area-aware calc. */
+                padding-top: 56px !important;
+                padding-top: calc(56px + env(safe-area-inset-top)) !important;
+            }
+            
+            section .block-container {
+                padding: 2rem 1rem 1rem !important;
+            }
+            
+            section .st-emotion-cache-qdbtli.ea3mdgi2 {
+                padding: 1rem 1rem 20px !important;
+            }
+            
+            </style>
+        """
+        st.markdown(chat_ui_style, unsafe_allow_html=True)
         # Initialize API base URL and optionally auto-start backend regardless of sidebar visibility
         # Check if SSL certificates exist to determine protocol
-        ssl_cert_file = "./SSL/fullchain.pem"
-        ssl_key_file = "./SSL/privkey_converted.pem"
-        protocol = "https" if os.path.exists(ssl_cert_file) and os.path.exists(ssl_key_file) else "http"
-        DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", f"{protocol}://127.0.0.1:8504")
+        tls_on = bool(SSL_CERT_FILE and SSL_KEY_FILE
+                      and os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE))
+        protocol = "https" if tls_on else "http"
+        # Follow the backend's PORT
+        api_port = os.getenv("PORT", "8500")
+        DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", f"{protocol}://127.0.0.1:{api_port}")
         api_base_url = DEFAULT_API_BASE_URL
-        if os.getenv("AUTO_START_API", "true").lower() == "false" and not is_backend_healthy(api_base_url):
+        if os.getenv("AUTO_START_API", "true").lower() == "true" and not is_backend_healthy(api_base_url):
             try:
                 # Parse URL to extract host and port
                 if api_base_url.startswith("https://"):
@@ -809,7 +836,7 @@ class ChatApp:
                 else:
                     host_port = api_base_url.replace("http://", "").split(":")
                 host = host_port[0]
-                port = int(host_port[1]) if len(host_port) > 1 else 8504
+                port = int(host_port[1]) if len(host_port) > 1 else int(api_port)
                 with st.spinner("Starting backend API..."):
                     started = start_backend_subprocess(host, port, protocol)
                     if started:
