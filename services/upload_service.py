@@ -21,6 +21,18 @@ from .base_service import BaseProcessingService
 logger = logging.getLogger(__name__)
 
 
+def _format_size(num_bytes: float) -> str:
+    """
+    Human-readable size.
+    Always printing MB gives "0.0MB" once the limit is configured in KB.
+    """
+    for unit in ("B", "KB", "MB"):
+        if num_bytes < 1024:
+            return f"{num_bytes:.0f}{unit}" if unit == "B" else f"{num_bytes:.1f}{unit}"
+        num_bytes /= 1024
+    return f"{num_bytes:.1f}GB"
+
+
 class UploadService(BaseProcessingService):
     """
     Service for handling file uploads and processing with validation.
@@ -50,6 +62,17 @@ class UploadService(BaseProcessingService):
         total_size = 0
         valid_files = []
 
+        max_file_size = Config.File.MAX_FILE_SIZE()
+
+        def too_large(filename: str, size: int) -> HTTPException:
+            return HTTPException(
+                status_code=400,
+                detail=(
+                    f"File '{filename}' is too large ({_format_size(size)}). "
+                    f"Maximum {_format_size(max_file_size)} per file."
+                ),
+            )
+
         # Process files concurrently for better performance
         async def process_single_file(file: UploadFile) -> tuple | None:
             if not file.filename:
@@ -60,6 +83,13 @@ class UploadService(BaseProcessingService):
                 logger.warning(f"Unsupported file type: {file.filename}")
                 return None
 
+            # Starlette knows the size up front, so reject before reading the
+            # whole upload into memory
+            declared_size = getattr(file, "size", None)
+            if declared_size is not None and declared_size > max_file_size:
+                logger.warning(f"File too large: {file.filename} ({declared_size} bytes)")
+                raise too_large(file.filename, declared_size)
+
             # Read file content for size validation
             try:
                 file_content = await file.read()
@@ -68,10 +98,16 @@ class UploadService(BaseProcessingService):
 
                 # Reset file position for potential re-reading
                 await file.seek(0)
-                return (file, file_content)
             except Exception as e:
                 logger.error(f"Error reading file {file.filename}: {e}")
                 return None
+
+            # Fallback for servers that do not report a size
+            if len(file_content) > max_file_size:
+                logger.warning(f"File too large: {file.filename} ({len(file_content)} bytes)")
+                raise too_large(file.filename, len(file_content))
+
+            return (file, file_content)
 
         # Process all files concurrently
         tasks = [process_single_file(file) for file in files]
@@ -79,6 +115,10 @@ class UploadService(BaseProcessingService):
 
         # Collect valid results and calculate total size
         for result in results:
+            # gather() captures exceptions instead of raising them, so a rejection
+            # would be silently swallowed without this
+            if isinstance(result, HTTPException):
+                raise result
             if isinstance(result, Exception):
                 logger.error(f"Error processing file: {result}")
                 continue
@@ -95,7 +135,10 @@ class UploadService(BaseProcessingService):
         if total_size > Config.File.MAX_TOTAL_BATCH_SIZE():
             raise HTTPException(
                 status_code=400,
-                detail=f"Total batch size too large. Maximum {Config.File.MAX_TOTAL_BATCH_SIZE() / (1024*1024):.1f}MB allowed.",
+                detail=(
+                    f"Total batch size too large ({_format_size(total_size)}). "
+                    f"Maximum {_format_size(Config.File.MAX_TOTAL_BATCH_SIZE())} allowed."
+                ),
             )
 
         return valid_files
