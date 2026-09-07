@@ -58,6 +58,35 @@ def _sanitize_history(
     return clean
 
 
+def _build_context(search_results: List[Dict[str, Any]], max_length: int) -> str:
+    """Pack retrieved chunks into the context whole, highest scoring first."""
+    if not search_results:
+        return ""
+
+    ordered = sorted(
+        search_results, key=lambda r: r.get("combined_score", 0.0), reverse=True
+    )
+
+    parts: List[str] = []
+    used = 0
+    for result in ordered:
+        block = f"[Chunk {result['index']}]\n{result['document']}\n"
+        cost = len(block) + (1 if parts else 0)  # 1 for the joining newline
+        if used + cost > max_length:
+            if parts:
+                continue
+            block = block[:max_length]  # Top chunk alone exceeds the budget
+            cost = len(block)
+        parts.append(block)
+        used += cost
+
+    dropped = len(ordered) - len(parts)
+    if dropped:
+        logger.debug(f"Context budget {max_length} chars: kept {len(parts)}, dropped {dropped}")
+
+    return "\n".join(parts)
+
+
 class ChatbotService:
     """
     RAG-powered chatbot service with smart caching, confidence scoring, and batch processing.
@@ -197,28 +226,16 @@ class ChatbotService:
                     )
                     
                     # Assemble context from top-ranked chunks for precision
-                    if search_results:
-                        context_chunks = []
-                        for result in search_results:
-                            context_chunks.append(f"[Chunk {result['index']}]\n{result['document']}\n")
-                        context = "\n".join(context_chunks)
-                    else:
-                        context = ""
-                    
+                    context = _build_context(search_results, Config.LLM.MAX_CONTEXT_LENGTH())
+
                     logger.info(f"📄 Retrieved context length: {len(context)} characters")
-                    
+
                     # Log context preview for debugging
                     if context:
                         context_preview = context[:200].replace('\n', ' ').replace('\r', ' ')
                         logger.info(f"📄 Context preview: {context_preview}...")
                     else:
                         logger.warning(" No context retrieved from documents")
-                    
-                    # Optimize context length for performance
-                    if context and len(context) > Config.LLM.MAX_CONTEXT_LENGTH():
-                        original_length = len(context)
-                        context = context[:Config.LLM.MAX_CONTEXT_LENGTH()]
-                        logger.debug(f" Context truncated: {original_length} -> {len(context)} chars for performance")
                 except Exception as e:
                     logger.warning(f" Context retrieval failed: {e}")
                     context = ""
@@ -747,19 +764,7 @@ class ChatbotService:
                     )
                     
                     # Build context from hybrid search results
-                    if search_results:
-                        context_chunks: List[str] = []
-                        for result in search_results:
-                            context_chunks.append(f"[Chunk {result['index']}]\n{result['document']}\n")
-                        context = "\n".join(context_chunks)
-
-                        max_context_length = Config.LLM.MAX_CONTEXT_LENGTH()
-                        if len(context) > max_context_length:
-                            context = context[:max_context_length]
-                            logger.debug(f" Context truncated to {max_context_length} characters (streaming)")
-                    
-                    if context and len(context) > Config.LLM.MAX_CONTEXT_LENGTH():
-                        context = context[:Config.LLM.MAX_CONTEXT_LENGTH()]
+                    context = _build_context(search_results, Config.LLM.MAX_CONTEXT_LENGTH())
                 except Exception as e:
                     logger.warning(f" Hybrid search failed (streaming): {e}")
                     context = ""
