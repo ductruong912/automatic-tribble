@@ -258,8 +258,7 @@ def main():
         host = args.host if args.host else Config.Server.HOST()
         port = args.port if args.port else Config.Server.PORT()
 
-        # Determine if we should enable auto-reload (development mode)
-        enable_reload = Config.Server.DEBUG()
+        enable_reload = Config.Server.RELOAD()
         
         # Get uvicorn configuration optimized for Windows
         uvicorn_config = get_uvicorn_config()

@@ -21,6 +21,42 @@ from models.responses import ChatResponse, ErrorResponse, BaseResponse, StatusEn
 
 logger = logging.getLogger(__name__)
 
+# Roles a client may supply. "system" is excluded on purpose: accepting it would
+# let the request body replace the bot's own instructions.
+_ALLOWED_HISTORY_ROLES = {"user", "assistant"}
+
+
+def _sanitize_history(
+    history: Optional[List[Dict[str, str]]]
+) -> List[Dict[str, str]]:
+    """
+    Keep only well-formed user/assistant turns from client history and cap each one.
+    Rebuilds every message so no extra client-supplied key reaches the API.
+    """
+    if not history:
+        return []
+
+    max_length = Config.LLM.MAX_HISTORY_MESSAGE_LENGTH()
+    clean: List[Dict[str, str]] = []
+
+    for msg in history:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = msg.get("content")
+        if not isinstance(role, str) or not isinstance(content, str):
+            continue
+        role = role.strip().lower()
+        if role not in _ALLOWED_HISTORY_ROLES or not content.strip():
+            continue
+        clean.append({"role": role, "content": content[:max_length]})
+
+    dropped = len(history) - len(clean)
+    if dropped:
+        logger.warning(f"Dropped {dropped} invalid message(s) from client history")
+
+    return clean
+
 
 class ChatbotService:
     """
@@ -539,6 +575,10 @@ class ChatbotService:
         Returns:
             Dict containing response, confidence metrics, and search metadata
         """
+        # History comes straight from the request body - strip anything that is
+        # not a plain user/assistant turn before it reaches the model
+        history = _sanitize_history(history)
+
         if not self.api_available:
             error_response = self._create_error_response(query, "I apologize, but the chat service is currently unavailable. Please try again later.")
             return error_response
@@ -674,6 +714,9 @@ class ChatbotService:
         Uses AsyncOpenAI for better performance and async context retrieval.
         Yields each token as it is generated.
         """
+        # Same filtering as the non-streaming path
+        history = _sanitize_history(history)
+
         if not self.api_available:
             yield "[ERROR] Chat service unavailable."
             return
@@ -727,9 +770,8 @@ class ChatbotService:
                 max_history_messages = min(len(history), 20)
                 history_to_include = history[-max_history_messages:]
                 for msg in history_to_include:
-                    # Ensure each message is a dict with 'role' and 'content' as str
-                    if isinstance(msg, dict) and "role" in msg and "content" in msg:
-                        openai_messages.append(cast(ChatCompletionMessageParam, {"role": str(msg["role"]), "content": str(msg["content"])}))
+                    # Already validated by _sanitize_history
+                    openai_messages.append(cast(ChatCompletionMessageParam, msg))
             
             # Use enriched query for user message to provide better context to LLM
             # This ensures LLM understands what the user is asking about

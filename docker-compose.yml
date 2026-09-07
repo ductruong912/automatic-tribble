@@ -19,6 +19,7 @@ services:
       - HOST=0.0.0.0
       - PORT=8500
       - DEBUG=False
+      - RELOAD=False
       - UVICORN_WORKERS=1
 
       # Logging Configuration

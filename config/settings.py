@@ -103,6 +103,11 @@ class LLMConfig:
     def LLM_HISTORY_LENGTH():
         return int(os.getenv("LLM_HISTORY_LENGTH", "9"))
 
+    @staticmethod
+    def MAX_HISTORY_MESSAGE_LENGTH():
+        """Cap on each client-supplied history message, in characters."""
+        return int(os.getenv("MAX_HISTORY_MESSAGE_LENGTH", "4000"))
+
 
 class FileConfig:
     """File processing and upload configuration."""
@@ -174,6 +179,11 @@ class ServerConfig:
     @staticmethod
     def DEBUG():
         return os.getenv("DEBUG", "False").lower() == "true"
+
+    @staticmethod
+    def RELOAD():
+        """Uvicorn auto-reload; falls back to DEBUG when unset."""
+        return os.getenv("RELOAD", str(ServerConfig.DEBUG())).lower() == "true"
 
     @staticmethod
     def UVICORN_WORKERS():
