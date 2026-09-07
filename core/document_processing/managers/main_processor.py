@@ -95,8 +95,8 @@ class MainDocumentProcessor:
                 if not documents:
                     raise ValueError(f"No content could be extracted from {filename}")
 
-                # Save chunks to files for persistence and debugging
-                chunks_dir = await self.file_manager.save_chunks_to_files(
+                # Save chunks to files, replacing any previous version of this file
+                storage = await self.file_manager.save_chunks_to_files(
                     documents, filename
                 )
 
@@ -104,13 +104,12 @@ class MainDocumentProcessor:
                 return {
                     "documents": documents,
                     "metadata": {
-                        "chunks_directory": chunks_dir,
                         "processing_timestamp": datetime.now().isoformat(),
                         "processor_version": processor_version,
                         "chunk_size": Config.File.CHUNK_SIZE(),
                         "chunk_overlap": Config.File.CHUNK_OVERLAP(),
                         "file_type": file_ext,
-                        "total_chunks": len(documents),
+                        **self._storage_metadata(storage),
                     }
                 }
             else:
@@ -129,8 +128,8 @@ class MainDocumentProcessor:
                 if not result.get("documents"):
                     raise ValueError(f"No content could be extracted from {filename}")
 
-                # Save chunks to files for persistence and debugging
-                chunks_dir = await self.file_manager.save_chunks_to_files(
+                # Save chunks to files, replacing any previous version of this file
+                storage = await self.file_manager.save_chunks_to_files(
                     result["documents"], filename
                 )
 
@@ -139,11 +138,11 @@ class MainDocumentProcessor:
                     "documents": result["documents"],
                     "metadata": {
                         **result["metadata"],
-                        "chunks_directory": chunks_dir,
                         "processing_timestamp": datetime.now().isoformat(),
                         "processor_version": result["metadata"].get("processor_version", "docling"),
                         "chunk_size": Config.File.CHUNK_SIZE(),
                         "chunk_overlap": Config.File.CHUNK_OVERLAP(),
+                        **self._storage_metadata(storage),
                     }
                 }
 
@@ -151,6 +150,24 @@ class MainDocumentProcessor:
             logger = __import__('logging').getLogger(__name__)
             logger.error(f"Error processing file {filename}: {e}")
             raise
+
+    @staticmethod
+    def _storage_metadata(storage: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build the metadata describing where chunks were stored and what they replaced.
+
+        total_chunks comes from the count actually written, not the count produced:
+        chunks that clean up to nothing are skipped and never reach the index.
+        """
+        return {
+            "chunks_directory": storage["path"],
+            "source_name": storage["source_name"],
+            "total_chunks": storage["chunk_count"],
+            "content_sha256": storage["content_sha256"],
+            "replaced_existing": storage["replaced_existing"],
+            "previous_chunk_count": storage["previous_chunk_count"],
+            "content_changed": storage["content_changed"],
+        }
 
     def get_supported_formats(self) -> List[str]:
         """Get list of supported file formats."""

@@ -9,6 +9,16 @@ import os
 from config.settings import Config
 from .text_utils import TextUtils
 
+# Windows device names, unusable as a file or directory name even with an extension
+RESERVED_WINDOWS_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
 
 class ValidationUtils:
     """Utility functions for input validation."""
@@ -134,33 +144,8 @@ class ValidationUtils:
             return {"valid": False, "error": "Filename too long (max 255 characters)"}
 
         # Check for reserved names (Windows)
-        reserved_names = {
-            "CON",
-            "PRN",
-            "AUX",
-            "NUL",
-            "COM1",
-            "COM2",
-            "COM3",
-            "COM4",
-            "COM5",
-            "COM6",
-            "COM7",
-            "COM8",
-            "COM9",
-            "LPT1",
-            "LPT2",
-            "LPT3",
-            "LPT4",
-            "LPT5",
-            "LPT6",
-            "LPT7",
-            "LPT8",
-            "LPT9",
-        }
-
         name_without_ext = Path(filename).stem.upper()
-        if name_without_ext in reserved_names:
+        if name_without_ext in RESERVED_WINDOWS_NAMES:
             return {"valid": False, "error": f"Filename '{filename}' is reserved"}
 
         return {"valid": True, "error": None}
@@ -168,23 +153,41 @@ class ValidationUtils:
     @staticmethod
     def sanitize_filename(filename: str) -> str:
         """
-        Sanitize filename by removing invalid characters for safe file operations.
-        Replaces problematic characters with underscores for cross-platform compatibility.
+        Sanitize filename by replacing invalid characters for safe file operations.
+
+        Repairs the name instead of rejecting it: returning a constant for every name
+        that fails validation would map unrelated files onto the same storage location.
         """
-        if not filename:
+        if not filename or not filename.strip():
             return "unnamed_file"
-        validation = ValidationUtils.validate_filename(filename)
-        if not validation["valid"]:
-            return "unnamed_file"
-        # Replace invalid characters with underscores for safety
+
+        # Drop any directory component so the result cannot escape its parent
+        sanitized = Path(filename.strip()).name
+
+        # Replace characters Windows rejects, plus control characters
         invalid_chars = '<>:"/\\|?*'
-        sanitized = filename
         for char in invalid_chars:
             sanitized = sanitized.replace(char, "_")
+        sanitized = "".join(char for char in sanitized if ord(char) >= 32)
+
         while "__" in sanitized:
             sanitized = sanitized.replace("__", "_")
-        sanitized = sanitized.strip("_").strip()
-        return sanitized if sanitized else "unnamed_file"
+        # Windows silently drops trailing dots and spaces
+        sanitized = sanitized.strip("_").strip().rstrip(". ")
+
+        # "." and ".." are directory references, not names
+        if not sanitized or set(sanitized) == {"."}:
+            return "unnamed_file"
+
+        if Path(sanitized).stem.upper() in RESERVED_WINDOWS_NAMES:
+            sanitized = f"file_{sanitized}"
+
+        # Leave room for the chunk filenames stored under this name
+        if len(sanitized) > 200:
+            suffix = Path(sanitized).suffix[:20]
+            sanitized = sanitized[: 200 - len(suffix)] + suffix
+
+        return sanitized
 
     @staticmethod
     def validate_email(email: str) -> Dict[str, Any]:
