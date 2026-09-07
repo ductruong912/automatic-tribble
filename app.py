@@ -1,5 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
+import json
 import os
 import sys
 import time
@@ -12,7 +13,7 @@ from utils.file_operations import cleanup_data_folders
 
 
 st.set_page_config(
-    page_title="TNT ChatBot", 
+    page_title="ChatBot",
     initial_sidebar_state="collapsed",
     layout="wide"
 )
@@ -39,6 +40,14 @@ def is_backend_healthy(base_url: str) -> bool:
 
 
 def stream_chat(base_url: str, query: str, history: list = None):
+    """
+    Read the Server-Sent Events stream from /chat/, yielding ("token", text) pairs and
+    at most one ("error", message).
+
+    Each frame carries a JSON payload, so line breaks inside the answer arrive intact.
+    Splitting on "\\n" specifically - rather than letting requests use splitlines() -
+    keeps rarer Unicode line separators inside a token from cutting a frame in half.
+    """
     url = f"{base_url}/chat/"
     headers = {"accept": "text/event-stream", "content-type": "application/json"}
     payload = {"query": query}
@@ -46,18 +55,35 @@ def stream_chat(base_url: str, query: str, history: list = None):
         payload["history"] = history
     with requests.post(url, json=payload, headers=headers, stream=True, timeout=300, verify=False) as r:
         r.raise_for_status()
-        for line in r.iter_lines(decode_unicode=True, chunk_size=1):
-            if not line:
+
+        data_lines = []
+        for line in r.iter_lines(decode_unicode=True, delimiter="\n"):
+            line = (line or "").rstrip("\r")
+
+            if line:
+                if line.startswith(":"):
+                    continue  # Comment / keep-alive ping
+                field, _, value = line.partition(":")
+                if field == "data":
+                    data_lines.append(value[1:] if value.startswith(" ") else value)
                 continue
-            # Handle Server-Sent Events style lines like 'data: token'
-            if line.startswith("data:"):
-                token = line[5:].lstrip()
-            else:
-                token = line
-            # Skip keep-alive pings
-            if token in ("[DONE]", ":keep-alive"):
+
+            # A blank line closes the frame
+            if not data_lines:
                 continue
-            yield token
+            raw, data_lines = "\n".join(data_lines), []
+            try:
+                event = json.loads(raw)
+            except ValueError:
+                continue  # Ignore a frame we cannot parse rather than showing it as text
+
+            if event.get("type") == "token":
+                yield "token", event.get("text", "")
+            elif event.get("type") == "error":
+                yield "error", event.get("message") or "Unknown error"
+                return
+            elif event.get("type") == "done":
+                return
 
 
 def start_backend_subprocess(host: str, port: int, protocol: str = "http") -> bool:
@@ -152,20 +178,6 @@ def format_markdown_response_streaming(text: str) -> str:
     # Preserve Markdown hard line breaks (two+ spaces at end of line)
     text = re.sub(r'[ \t]{2,}(?=\n|$)', '\n', text)
 
-    # Merge split digits during streaming: "1 0" -> "10" (idempotent)
-    text = re.sub(r'(?<=\d)\s+(?=\d)', '', text)
-
-    # Ensure a newline after a colon if it immediately starts a numbered list (e.g., ":1. …")
-    # Keeps it idempotent by normalizing to exactly one newline
-    text = re.sub(r':\s*(?=(\d+)\.\s)', '::NEWLINE_PLACEHOLDER::', text)
-    text = text.replace('::NEWLINE_PLACEHOLDER::', ':\n')
-
-    # Ensure a newline after a colon if followed by a URL or markdown link
-    text = re.sub(r':\s*(?=(https?://|\[))', ':\n', text)
-
-    # Ensure a newline after a colon if glued to a capitalized heading token (e.g., ":Tempate …")
-    text = re.sub(r':(?=[A-ZÀ-Ỹ])', ':\n', text)
-
     # Make bare URLs clickable (idempotent)
     text = re.sub(r"(?<!\[)(https?://[^\s\)]+)(?!\])", r"[\1](\1)", text)
 
@@ -176,52 +188,20 @@ def format_markdown_response_streaming(text: str) -> str:
 
 
 def detect_and_format_patterns(text: str) -> str:
-    """Universal text structure formatter that intelligently detects and formats patterns."""
-    
-    # Fix cases where digits get split: "1 0" -> "10"
-    text = re.sub(r'(?<=\d)\s+(?=\d)', '', text)
+    """
+    Highlight step and section headings in a response.
 
-    # Step 1: Detect and format step patterns
+    The line and paragraph breaks the model writes now arrive intact, so this no longer
+    tries to rebuild structure from punctuation - guessing where a list or paragraph
+    started is what glued "1 200 000" into "1200000".
+    """
+    # Detect and format step patterns
     text = re.sub(r'(Bước \d+:)', r'**\1**', text)  # Vietnamese steps
     text = re.sub(r'(Step \d+:)', r'**\1**', text)  # English steps
-    
-    # Step 2: Detect and format section headers (lines ending with colon)
-    text = re.sub(r'^([A-Za-zÀ-ỹ\s]+:)$', r'**\1**', text, flags=re.MULTILINE)
-    
-    # Step 3: Universal list detection and formatting
-    # This handles any list pattern: bullet, numbered, dash, asterisk
-    list_patterns = [
-        (r'(?<!\n)(•\s)', r'\n\1'),      # Bullet points
-        (r'(?<!\n)(–\s)', r'\n\1'),      # En dash list items
-        # Numbered lists (ensure not preceded by a digit to avoid splitting "...4801" from "10.")
-        (r'(?<!\n)(?<!\d)(\d+\.\s)', r'\n\1'),
-        (r'(?<!\n)(-\s)', r'\n\1'),      # Dash lists
-        (r'(?<!\n)(\*\s)', r'\n\1'),     # Asterisk lists
-    ]
-    
-    for pattern, replacement in list_patterns:
-        text = re.sub(pattern, replacement, text)
-    
-    # Step 4: Universal paragraph breaking
-    # Break on sentence boundaries followed by capital letters or special characters
-    # Require a space after the period to avoid breaking decimals/DOIs like "10.25073"
-    paragraph_breaks = [
-        (r'\.(\s+)(?=[A-ZÀ-Ỹ])', '.\n\n'),  # Period + space(s) + capital
-        (r'\.(\s+)(?=–)', '.\n\n'),          # Period + space(s) + dash
-        (r'\.(\s+)(?=•)', '.\n\n'),          # Period + space(s) + bullet
-        # Period + space(s) + numbered list, but not when the number is preceded by a digit (e.g., "4801 10.")
-        (r'\.(\s+)(?=(?<!\d)\d+\.)', '.\n\n'),
-    ]
 
-    for pattern, replacement in paragraph_breaks:
-        text = re.sub(pattern, replacement, text)
-    
-    # Step 5: Handle dense text with no structure
-    # If text is very long without breaks, add strategic breaks
-    if len(text) > 500 and '\n' not in text:
-        # Break on common sentence endings followed by common list starters
-        text = re.sub(r'(\.)(\s*)([A-ZÀ-Ỹ])', r'\1\n\n\3', text)
-    
+    # Detect and format section headers (lines ending with colon)
+    text = re.sub(r'^([A-Za-zÀ-ỹ\s]+:)$', r'**\1**', text, flags=re.MULTILINE)
+
     return text
 
 
@@ -241,22 +221,21 @@ def format_urls(text: str) -> str:
 
 
 def improve_structure(text: str) -> str:
-    """Improve overall text structure and spacing."""
-    
+    """
+    Add breathing room around headings.
+
+    List items are left alone: they arrive on their own lines already, and re-breaking
+    them used to split numbers that merely looked like list markers.
+    """
     # Ensure proper spacing around **Bước X:** patterns
     text = re.sub(r'(\*\*Bước \d+:\*\*)', r'\n\n\1\n', text)
-    
+
     # Ensure proper spacing around other bold section headers
     text = re.sub(r'(\*\*[^:]+:\*\*)', r'\n\n\1\n', text)
-    
+
     # Ensure proper spacing around ## headers
     text = re.sub(r'(## [^\n]+)', r'\n\n\1\n', text)
-    
-    # Ensure list items have proper spacing
-    text = re.sub(r'(?<!\n)(- [^\n]+)', r'\n\1', text)
-    # Numbered list spacing: avoid triggering when preceded by a digit (e.g., DOI tails)
-    text = re.sub(r'(?<!\n)(?<!\d)(\d+\. [^\n]+)', r'\n\1', text)
-    
+
     return text
 
 
@@ -267,8 +246,8 @@ class ChatApp:
     """
 
     def __init__(self):
-        # st.set_page_config(page_title="TNT ChatBot", initial_sidebar_state="collapsed")
-        # st.title("TNT ChatBot")
+        # st.set_page_config(page_title="ChatBot", initial_sidebar_state="collapsed")
+        # st.title("ChatBot")
 
         # Initialize session state variables only if they are not already set
         if "uploaded_docs" not in st.session_state:
@@ -417,7 +396,7 @@ class ChatApp:
                 <div class="chat-header">
                     <div class="header-left">
                         <img src="data:image/jpeg;base64,{logo_base64}" alt="Logo">
-                        <h2>TNT ChatBot</h2>
+                        <h2>ChatBot</h2>
                     </div>
                     <div class="header-right">
                         <button class="header-btn fullscreen-btn" data-action="fullscreen" title="Toàn màn hình">
@@ -814,7 +793,7 @@ class ChatApp:
             """
             st.markdown(chat_ui_style, unsafe_allow_html=True)
         else:
-            st.header("TNT ChatBot")
+            st.header("ChatBot")
         # Initialize API base URL and optionally auto-start backend regardless of sidebar visibility
         # Check if SSL certificates exist to determine protocol
         ssl_cert_file = "./SSL/fullchain.pem"
@@ -904,11 +883,7 @@ class ChatApp:
                 st.toast("Knowledge base is ready")
                 # Gửi tin nhắn chào mừng lần đầu tiên
         if len(st.session_state.chat_history) == 0:
-            greeting_message = """<strong>Xin chào, tôi là Trợ lý TNT </strong>
-
-Tôi có thể giúp bạn chọn giải pháp công nghệ phù hợp. 
-
-<strong>Bạn cần tư vấn gì hôm nay?</strong>"""
+            greeting_message = """<strong>Xin chào, Bạn cần tư vấn gì hôm nay? </strong>"""
             st.session_state.chat_history.append({"role": "assistant", "content": greeting_message})
 
         # Render chat history
@@ -929,33 +904,42 @@ Tôi có thể giúp bạn chọn giải pháp công nghệ phù hợp.
             with st.chat_message("assistant"):
                 # Show typing indicator first
                 placeholder = st.empty()
-                placeholder.markdown('<div class="bubble assistant"><div class="typing-indicator">TNT Chatbot đang xử lý yêu cầu của bạn<span class="dots"></span></div></div>', unsafe_allow_html=True)
+                placeholder.markdown('<div class="bubble assistant"><div class="typing-indicator">Chatbot đang xử lý yêu cầu của bạn<span class="dots"></span></div></div>', unsafe_allow_html=True)
                 
                 accumulated = ""
+                stream_error = None
                 last_flush = time.time()
                 try:
                     # Use api_base_url from sidebar and pass only the most recent 10 messages
                     recent_history = [msg for msg in st.session_state.chat_history[-10:] if msg["role"] in ["user", "assistant"]] if st.session_state.chat_history else []
-                    for token in stream_chat(api_base_url, user_input, recent_history):
-                        accumulated += token
+                    for kind, value in stream_chat(api_base_url, user_input, recent_history):
+                        if kind == "error":
+                            stream_error = value
+                            break
+                        accumulated += value
                         now = time.time()
                         # Flush frequently for smooth ChatGPT-like typing effect
-                        if token.endswith((" ", "\n", ".", ",", ":", ";", "!", "?")) or (now - last_flush) > 0.05:
+                        if value.endswith((" ", "\n", ".", ",", ":", ";", "!", "?")) or (now - last_flush) > 0.05:
                             # Wrap streaming content with typing cursor
                             placeholder.markdown(f'<div class="bubble assistant typing-cursor">{format_markdown_response_streaming(accumulated)}</div>', unsafe_allow_html=True)
                             last_flush = now
                         # Small delay for natural typing rhythm
                         time.sleep(0.02)
+                except Exception as e:
+                    stream_error = str(e)
+
+                if stream_error is not None:
+                    # Errors are shown as a UI notice and kept out of chat_history: stored
+                    # there they would render as something the bot said, and get sent back
+                    # to the model as context on the next turn.
+                    placeholder.empty()
+                    st.error(f"Không nhận được câu trả lời: {stream_error}")
+                else:
                     # After full completion, apply full formatter and update the UI immediately
                     final_text = format_markdown_response(accumulated)
                     # Wrap final content without typing cursor
                     placeholder.markdown(f'<div class="bubble assistant">{final_text}</div>', unsafe_allow_html=True)
                     st.session_state.chat_history.append({"role": "assistant", "content": final_text})
-                except Exception as e:
-                    error_msg = f"Chat failed: {e}"
-                    # Wrap error message without typing cursor
-                    placeholder.markdown(f'<div class="bubble assistant">{error_msg}</div>', unsafe_allow_html=True)
-                    st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
 
 
 if __name__ == "__main__":

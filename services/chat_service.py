@@ -17,6 +17,19 @@ from core.infrastructure.caching.cache_service import get_cache_service
 logger = logging.getLogger(__name__)
 
 
+class ChatUnavailableError(RuntimeError):
+    """
+    Chat cannot start, carrying the HTTP status the API should answer with.
+
+    Raised instead of yielded as a token: once a streaming response begins, the status
+    line has already been sent and can no longer report the failure.
+    """
+
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class ChatService:
     """
     Enhanced chat service with RAG integration, performance monitoring, and robust error handling.
@@ -516,26 +529,35 @@ class ChatService:
                 "timestamp": time.time()
             }
 
+    def ensure_can_stream(self, query: Optional[str]) -> None:
+        """
+        Check everything knowable before the first token, raising ChatUnavailableError.
+
+        Call this before opening the streaming response so these failures come back as a
+        real HTTP status instead of as an error message inside a successful stream.
+        """
+        if not query or not query.strip():
+            raise ChatUnavailableError("Query cannot be empty.", 400)
+        if not self.chatbot_service.api_available:
+            raise ChatUnavailableError("Chat service is currently unavailable.", 503)
+        if self._get_cached_vector_store() is None:
+            raise ChatUnavailableError("Knowledge base is unavailable.", 503)
+
     async def stream_chat_with_memory(
         self, query: str, custom_history: Optional[List[Dict[str, str]]] = None
     ) -> AsyncGenerator[str, None]:
         """
         Async generator for streaming chat responses with memory/history support.
         Calls the streaming method on ChatbotService and yields tokens.
+
+        Callers should run ensure_can_stream() first; the checks repeated here only
+        cover the vector store cache expiring between that call and this one.
         """
-        # Validate input query
-        if not query or not query.strip():
-            yield "[ERROR] Empty query provided."
-            return
-        if not self.chatbot_service.api_available:
-            yield "[ERROR] Chat service is currently unavailable."
-            return
         # Load vector store with caching
         vector_store_result = self._get_cached_vector_store()
         if vector_store_result is None:
-            yield "[ERROR] Knowledge base unavailable"
-            return
-        
+            raise ChatUnavailableError("Knowledge base is unavailable.", 503)
+
         _, current_embeddings, current_documents = vector_store_result
         if not current_documents:
             current_embeddings = np.array([])

@@ -713,13 +713,15 @@ class ChatbotService:
         Async generator that streams response tokens from OpenAI with conversation history.
         Uses AsyncOpenAI for better performance and async context retrieval.
         Yields each token as it is generated.
+
+        Failures are raised, not yielded: a token is indistinguishable from an answer to
+        the caller, so an error text yielded here would be rendered as if the bot said it.
         """
         # Same filtering as the non-streaming path
         history = _sanitize_history(history)
 
         if not self.api_available:
-            yield "[ERROR] Chat service unavailable."
-            return
+            raise RuntimeError("Chat service unavailable: OpenAI client is not configured.")
 
         try:
             # Enrich query with conversation context if history provided
@@ -790,8 +792,11 @@ class ChatbotService:
                 content = chunk.choices[0].delta.content
                 if content is not None:
                     yield content
-        except Exception as e:
-            yield f"[ERROR] {str(e)}"
+        except Exception:
+            # Log here, where the traceback still exists; the API turns this into a
+            # generic message so exception details never reach the client.
+            logger.exception(f"Streaming failed for query: {query[:100]}")
+            raise
 
     def _enrich_query_with_history(self, query: str, history: Optional[List[Dict[str, str]]] = None) -> str:
         """
