@@ -119,7 +119,8 @@ class ContextRetriever:
         if not document_metadata or len(document_metadata) != total_documents:
             # Fallback: expand purely by index adjacency if metadata is missing
             logger.warning(" Document metadata not available, using index-adjacent expansion")
-            max_chunks = Config.RAG.MAX_CONTEXT_CHUNKS()
+            # Never below the number of ranked results
+            max_chunks = max(Config.RAG.MAX_CONTEXT_CHUNKS(), len(top_indices))
             if max_chunks <= 0:
                 return top_indices
 
@@ -130,6 +131,9 @@ class ContextRetriever:
                 if 0 <= i < total_documents and i not in seen and len(ordered) < max_chunks:
                     ordered.append(i)
                     seen.add(i)
+
+            for seed in top_indices:
+                add_idx(seed)
 
             for seed in top_indices:
                 if len(ordered) >= max_chunks:
@@ -147,7 +151,8 @@ class ContextRetriever:
             )
             return ordered
 
-        max_chunks = Config.RAG.MAX_CONTEXT_CHUNKS()
+        # Never below the number of ranked results
+        max_chunks = max(Config.RAG.MAX_CONTEXT_CHUNKS(), len(top_indices))
         if max_chunks <= 0:
             return top_indices
 
@@ -168,34 +173,30 @@ class ContextRetriever:
                 source_chunks[source_id] = []
             source_chunks[source_id].append(i)
 
-        # For each seed, find its position within its source and expand within that source only
-        for seed_pos, seed in enumerate(top_indices):
+        # Every seed first: neighbours carry no score and must never displace a ranked hit
+        for seed in top_indices:
+            add_idx(seed)
+
+        # Then spend whatever room is left on neighbours, within the same source only
+        for seed in top_indices:
             if len(ordered) >= max_chunks:
                 break
-            
+
             seed_source = document_metadata[seed].get("source_id", "unknown")
             if seed_source not in source_chunks:
-                # If source not found, just add the seed itself
-                add_idx(seed)
                 continue
-                
-            # Find the seed's position within its source chunks
+
             source_chunk_indices = source_chunks[seed_source]
             try:
                 seed_position_in_source = source_chunk_indices.index(seed)
             except ValueError:
-                # Seed not found in source chunks, just add it
-                add_idx(seed)
                 continue
-            
-            # Calculate expansion range within the source
+
             start_in_source = max(0, seed_position_in_source - expansion_radius)
             end_in_source = min(len(source_chunk_indices) - 1, seed_position_in_source + expansion_radius)
-            
-            # Add chunks from the source in order
+
             for pos in range(start_in_source, end_in_source + 1):
-                chunk_index = source_chunk_indices[pos]
-                add_idx(chunk_index)
+                add_idx(source_chunk_indices[pos])
                 if len(ordered) >= max_chunks:
                     break
 
@@ -243,6 +244,70 @@ class ContextRetriever:
 
         return results
 
+    @staticmethod
+    def _reciprocal_rank_fusion(
+        semantic_scores: np.ndarray,
+        keyword_scores: np.ndarray,
+        semantic_weight: float,
+        k_constant: int = 60,
+    ) -> np.ndarray:
+        """Fuse the two rankings by rank rather than by score, scaled to [0, 1]."""
+        semantic_scores = np.asarray(semantic_scores, dtype=float)
+        keyword_scores = np.asarray(keyword_scores, dtype=float)
+        total = len(semantic_scores)
+
+        semantic_rank = np.empty(total, dtype=float)
+        semantic_rank[np.argsort(semantic_scores)[::-1]] = np.arange(total)
+        keyword_rank = np.empty(total, dtype=float)
+        keyword_rank[np.argsort(keyword_scores)[::-1]] = np.arange(total)
+
+        # A chunk neither retriever scored must not gain rank credit
+        semantic_rank[semantic_scores <= 0] = total
+        keyword_rank[keyword_scores <= 0] = total
+
+        fused = (
+            semantic_weight / (k_constant + semantic_rank + 1)
+            + (1 - semantic_weight) / (k_constant + keyword_rank + 1)
+        )
+        return fused / (1.0 / (k_constant + 1))
+
+    def _faiss_semantic_scores(
+        self,
+        query_embedding: np.ndarray,
+        embeddings: np.ndarray,
+        keyword_scores: np.ndarray,
+        total_documents: int,
+        k: int,
+    ) -> np.ndarray:
+        """Semantic scores from FAISS, plus exact cosine for the chunks BM25 ranks highest."""
+        scores = np.zeros(total_documents, dtype=float)
+
+        top_similarities, top_indices = self.vector_store.fast_similarity_search(
+            query_embedding, min(max(k, 1), total_documents)
+        )
+        for sim, idx in zip(top_similarities, top_indices):
+            if 0 <= int(idx) < total_documents:
+                scores[int(idx)] = float(sim)
+
+        embeddings = np.asarray(embeddings)
+        if embeddings.ndim != 2 or embeddings.shape[0] != total_documents:
+            return scores
+
+        # Chunks BM25 ranks highest but FAISS did not return
+        keyword_scores = np.asarray(keyword_scores, dtype=float)
+        pool = min(max(k * 10, 50), total_documents)
+        candidates = [
+            int(i)
+            for i in np.argsort(keyword_scores)[::-1][:pool]
+            if keyword_scores[i] > 0 and scores[i] == 0.0
+        ]
+        if candidates:
+            scores[candidates] = self.similarity_calculator.cosine_similarity(
+                query_embedding, embeddings[candidates]
+            )
+
+        return scores
+
     def hybrid_search(
         self,
         query: str,
@@ -284,26 +349,12 @@ class ContextRetriever:
             except Exception:
                 pass
 
-            if Config.RAG.USE_FAISS_INDEX() and getattr(self.vector_store, "faiss_index", None) is not None:
-                logger.info("Using FAISS for semantic search")
-                top_similarities, top_indices = self.vector_store.fast_similarity_search(query_embedding, k)
-                # Expand to full-length semantic score vector aligned with documents
-                semantic_scores = np.zeros(len(documents), dtype=float)
-                # Ensure numeric type and safe assignment
-                for sim, idx in zip(top_similarities, top_indices):
-                    if 0 <= int(idx) < len(semantic_scores):
-                        semantic_scores[int(idx)] = float(sim)
-            else:
-                semantic_scores = self.similarity_calculator.cosine_similarity(
-                    query_embedding, embeddings
-                )
-
             # Keyword search using BM25 with enhanced caching
             try:
                 cache_key = (len(documents), hash(documents[0]) if documents else 0)
             except Exception:
                 cache_key = len(documents)
-            
+
             # Check query cache first
             query_cache_key = f"{query}_{cache_key}"
             if query_cache_key in self._query_cache:
@@ -314,51 +365,61 @@ class ContextRetriever:
                     self._tokenized_docs = [self._tokenize(doc) for doc in documents]
                     self._bm25_instance = BM25Okapi(self._tokenized_docs)
                     self._bm25_cache_key = cache_key
-                
+
                 # Compute BM25 scores
                 keyword_scores = self._bm25_instance.get_scores(self._tokenize(query)) if self._bm25_instance else np.zeros(len(documents))
-                
+
                 # Cache the result
                 self._query_cache[query_cache_key] = keyword_scores
-                
+
                 # Limit query cache size
                 if len(self._query_cache) > 500:
                     # Remove oldest entries
                     oldest_key = next(iter(self._query_cache))
                     del self._query_cache[oldest_key]
 
-            # Normalize scores to [0, 1] before combining
+            if Config.RAG.USE_FAISS_INDEX() and getattr(self.vector_store, "faiss_index", None) is not None:
+                logger.info("Using FAISS for semantic search")
+                semantic_scores = self._faiss_semantic_scores(
+                    query_embedding, embeddings, keyword_scores, len(documents), k
+                )
+            else:
+                semantic_scores = self.similarity_calculator.cosine_similarity(
+                    query_embedding, embeddings
+                )
+
+            # Normalize scores to [0, 1] for the relevance gate
             norm_semantic_scores = self.similarity_calculator.normalize_similarities(
                 semantic_scores
             )
             norm_keyword_scores = self.similarity_calculator.normalize_similarities(
                 keyword_scores
             )
-            # Combine normalized scores
-            combined_scores = (
-                semantic_weight * norm_semantic_scores
-                + (1 - semantic_weight) * norm_keyword_scores
+            combined_scores = self._reciprocal_rank_fusion(
+                semantic_scores, keyword_scores, semantic_weight
             )
 
-            # Filter by similarity threshold before selecting top K (use combined score)
+            # Gate on the stronger of the two signals, so the blend weight cannot filter
+            # out a chunk that one retriever matched perfectly
+            best_signal = np.maximum(norm_semantic_scores, norm_keyword_scores)
             threshold = Config.RAG.SIMILARITY_THRESHOLD()
             filtered_indices = [
-                i for i in range(len(documents)) if combined_scores[i] >= threshold
+                i for i in range(len(documents)) if best_signal[i] >= threshold
             ]
 
             # Progressive threshold lowering if no results found
             if not filtered_indices:
                 logger.info(f" No results above threshold {threshold}, trying progressive lowering...")
                 thresholds_to_try = [0.7, 0.25, 0.15, 0.1, 0.05]
-                
+
                 for lower_threshold in thresholds_to_try:
                     if lower_threshold >= threshold:  # Skip if same or higher than original
                         continue
-                        
+
                     filtered_indices = [
-                        i for i in range(len(documents)) if combined_scores[i] >= lower_threshold
+                        i for i in range(len(documents)) if best_signal[i] >= lower_threshold
                     ]
-                    
+
                     if filtered_indices:
                         logger.info(f" Found {len(filtered_indices)} results with threshold {lower_threshold}")
                         break
