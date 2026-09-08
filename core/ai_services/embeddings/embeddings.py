@@ -44,7 +44,7 @@ class EmbeddingService:
             # Get model from config, with fallback to multilingual support
             try:
                 from config.settings import Config
-                primary_model = Config.LLM.EMBEDDING_MODEL()
+                primary_model = Config.RAG.EMBEDDING_MODEL()
             except Exception:
                 primary_model = "paraphrase-multilingual-MiniLM-L12-v2"
             

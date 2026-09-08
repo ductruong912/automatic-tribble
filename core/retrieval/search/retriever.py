@@ -244,6 +244,36 @@ class ContextRetriever:
 
         return results
 
+    def _ensure_vector_store_loaded(self) -> None:
+        """Load the vector store once, so every query is scored against the same index."""
+        if getattr(self.vector_store, "embeddings", None) is not None:
+            return
+        try:
+            self.vector_store.load_vector_store()
+        except Exception as e:
+            logger.warning(f" Could not load vector store for search: {e}")
+
+    @staticmethod
+    def _merge_reranked(
+        prelim: List[Dict[str, Any]],
+        reranked: List[Dict[str, Any]],
+        k: int,
+        guaranteed: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Reorder by the reranker while pinning the top retrieval hits, which it may drop."""
+        merged = list(prelim[:guaranteed])
+        seen = {r["index"] for r in merged}
+
+        for source in (reranked, prelim):
+            for result in source:
+                if len(merged) >= k:
+                    return merged[:k]
+                if result["index"] not in seen:
+                    merged.append(result)
+                    seen.add(result["index"])
+
+        return merged[:k]
+
     @staticmethod
     def _reciprocal_rank_fusion(
         semantic_scores: np.ndarray,
@@ -339,6 +369,10 @@ class ContextRetriever:
             return []
 
         try:
+            # Load before scoring: the store used to load only during context expansion,
+            # so the first query of a process ranked differently from every later one
+            self._ensure_vector_store_loaded()
+
             # No source filtering — search across all documents
             # Use ORIGINAL query (with diacritics) for semantic embedding
             query_embedding = self._ensure_numpy(
@@ -443,13 +477,16 @@ class ContextRetriever:
 
             # Sort by combined score for initial ranking
             results.sort(key=lambda x: x["combined_score"], reverse=True)
-            candidate_multiplier = 4 if Config.RAG.RERANKING_ENABLED() else 1
-            prelim_top_k = results[: max(k * candidate_multiplier, k)]
+            pool = k
+            if Config.RAG.RERANKING_ENABLED() and self.reranker is not None:
+                pool = max(getattr(self.reranker, "candidates", k * 4), k)
+            prelim_top_k = results[:pool]
 
             top_k_results = prelim_top_k[:k]
             if Config.RAG.RERANKING_ENABLED() and self.reranker is not None:
                 try:
-                    top_k_results = self.reranker.rerank(query, prelim_top_k, k)
+                    reranked = self.reranker.rerank(query, prelim_top_k, k)
+                    top_k_results = self._merge_reranked(prelim_top_k, reranked, k)
                 except Exception as e:
                     logger.warning(f" Reranking failed, using combined scores: {e}")
 

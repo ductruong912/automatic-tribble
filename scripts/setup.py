@@ -47,38 +47,17 @@ def create_directories():
 
 
 def setup_environment():
-    """Setup environment variables."""
+    """Create .env from .env.example when it does not exist yet."""
     env_file = Path(".env")
-    if not env_file.exists():
-        print("Creating .env file...")
-        env_content = """# RAG Chatbot Configuration
-# Copy this file and update the values as needed
-
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
-
-# Server Configuration
-HOST=0.0.0.0
-PORT=8500
-DEBUG=False
-
-# File Processing
-MAX_FILE_SIZE=52428800
-ALLOWED_EXTENSIONS=.txt,.pdf,.docx,.doc,.csv,.xlsx,.xls
-
-# RAG Configuration
-TOP_K_RESULTS=5
-SIMILARITY_THRESHOLD=0.7
-
-# Logging
-LOG_LEVEL=INFO
-LOG_TO_FILE=True
-"""
-        env_file.write_text(env_content)
-        print("Created .env file - please update with your API keys")
-    else:
+    example = Path(".env.example")
+    if env_file.exists():
         print(".env file already exists")
+        return
+    if not example.exists():
+        print("Missing .env.example - cannot create .env")
+        return
+    env_file.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    print("Created .env from .env.example - please update with your API keys")
 
 
 def main():

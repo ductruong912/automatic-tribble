@@ -21,6 +21,26 @@ except Exception:
     TRANSFORMERS_AVAILABLE = False
 
 
+def reranker_profile() -> Dict[str, Any]:
+    """Device, input length and candidate pool for the reranker; env values override the device defaults."""
+    try:
+        import torch
+        on_gpu = torch.cuda.is_available()
+    except Exception:
+        on_gpu = False
+    try:
+        from config.settings import Config
+        candidates = Config.RAG.RERANKER_CANDIDATES()
+        max_length = Config.RAG.RERANKER_MAX_LENGTH()
+    except Exception:
+        candidates = max_length = None
+    return {
+        "device": "cuda" if on_gpu else "cpu",
+        "max_length": max_length or (512 if on_gpu else 256),
+        "candidates": candidates or (32 if on_gpu else 12),
+    }
+
+
 class Reranker:
     """
     Rerank retrieval results given the user query and candidate chunks.
@@ -36,27 +56,30 @@ class Reranker:
             except Exception:
                 model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
         self._model_name = model_name
-        if CrossEncoder is not None or TRANSFORMERS_AVAILABLE:
-            # Try configured model first, then known fallback models
-            for candidate in [model_name, "cross-encoder/ms-marco-MiniLM-L-6-v2"]:
-                try:
-                    # Special handling for jinaai models that require trust_remote_code
-                    if candidate.startswith("jinaai/") and TRANSFORMERS_AVAILABLE:
-                        # Use transformers directly for jinaai models
-                        tokenizer = AutoTokenizer.from_pretrained(candidate, trust_remote_code=True)
-                        model = AutoModelForSequenceClassification.from_pretrained(candidate, trust_remote_code=True)
-                        # Create a CrossEncoder-like wrapper
-                        self._model = self._create_cross_encoder_wrapper(model, tokenizer)
-                        logger.info(f" Reranker loaded (transformers): {candidate}")
-                    else:
-                        # Use sentence_transformers for other models
-                        self._model = CrossEncoder(candidate)
-                        logger.info(f" Reranker loaded (sentence_transformers): {candidate}")
-                    
-                    self._model_name = candidate
-                    break
-                except Exception as e:
-                    logger.warning(f" Failed to load reranker '{candidate}': {e}")
+
+        profile = reranker_profile()
+        self.device = profile["device"]
+        self.max_length = profile["max_length"]
+        self.candidates = profile["candidates"]
+
+        if CrossEncoder is None and not TRANSFORMERS_AVAILABLE:
+            logger.error(" sentence-transformers not installed; reranking falls back to combined scores")
+            return
+        try:
+            if model_name.startswith("jinaai/") and TRANSFORMERS_AVAILABLE:
+                # jinaai models need trust_remote_code, loaded through transformers directly
+                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                model = AutoModelForSequenceClassification.from_pretrained(model_name, trust_remote_code=True)
+                self._model = self._create_cross_encoder_wrapper(model, tokenizer)
+            else:
+                self._model = CrossEncoder(model_name, device=self.device, max_length=self.max_length)
+            logger.info(
+                f" Reranker loaded: {model_name} on {self.device} "
+                f"(max_length={self.max_length}, candidates={self.candidates})"
+            )
+        except Exception as e:
+            # Reranking is skipped for this run; hybrid_search keeps its own ranking
+            logger.error(f" Failed to load reranker '{model_name}': {e}")
 
     def _create_cross_encoder_wrapper(self, model, tokenizer):
         """Create a CrossEncoder-like wrapper for transformers models."""
@@ -108,8 +131,9 @@ class Reranker:
                 scores = self._model.predict(pairs)
                 for i, s in enumerate(scores):
                     results[i]["rerank_score"] = float(s)
-                results.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
-                return results[:top_k]
+                # Sort a copy: the caller keeps its own ranking to fall back on
+                ranked = sorted(results, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+                return ranked[:top_k]
             except Exception as e:
                 logger.warning(f" Cross-encoder reranking failed, falling back: {e}")
 
@@ -120,7 +144,7 @@ class Reranker:
                 + 0.25 * float(r.get("norm_semantic_score", r.get("semantic_score", 0.0)))
                 + 0.1 * float(r.get("norm_keyword_score", r.get("keyword_score", 0.0)))
             )
-        results.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
-        return results[:top_k]
+        ranked = sorted(results, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+        return ranked[:top_k]
 
 

@@ -48,26 +48,6 @@ class LLMConfig:
         return os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     @staticmethod
-    def EMBEDDING_MODEL():
-        return os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-
-    @staticmethod
-    def RERANKER_MODEL():
-        return os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
-
-    @staticmethod
-    def MAX_TOKENS():
-        return int(os.getenv("MAX_TOKENS", "4000"))
-
-    @staticmethod
-    def TEMPERATURE():
-        return float(os.getenv("TEMPERATURE", "0.1"))
-
-    @staticmethod
-    def HISTORY_LENGTH():
-        return int(os.getenv("LLM_HISTORY_LENGTH", "9"))
-
-    @staticmethod
     def MAX_CONTEXT_LENGTH():
         return int(os.getenv("MAX_CONTEXT_LENGTH", "5000"))
 
@@ -203,16 +183,8 @@ class RAGConfig:
     """RAG and retrieval configuration."""
 
     @staticmethod
-    def TOP_K_RESULTS():
-        return int(os.getenv("TOP_K_RESULTS", "5"))
-
-    @staticmethod
     def SIMILARITY_THRESHOLD():
         return float(os.getenv("SIMILARITY_THRESHOLD", "0.65"))
-
-    @staticmethod
-    def QUERY_EXPANSION_ENABLED():
-        return os.getenv("QUERY_EXPANSION_ENABLED", "True").lower() == "true"
 
     @staticmethod
     def RERANKING_ENABLED():
@@ -241,6 +213,18 @@ class RAGConfig:
     @staticmethod
     def RERANKER_MODEL():
         return os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
+
+    @staticmethod
+    def RERANKER_CANDIDATES():
+        """Candidate pool handed to the reranker; None lets the device profile decide."""
+        value = os.getenv("RERANKER_CANDIDATES")
+        return int(value) if value else None
+
+    @staticmethod
+    def RERANKER_MAX_LENGTH():
+        """Token limit per query-chunk pair; None lets the device profile decide."""
+        value = os.getenv("RERANKER_MAX_LENGTH")
+        return int(value) if value else None
 
     @staticmethod
     def VIETNAMESE_PREPROCESSING_ENABLED():
