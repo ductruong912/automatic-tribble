@@ -131,6 +131,7 @@ class Reranker:
                 scores = self._model.predict(pairs)
                 for i, s in enumerate(scores):
                     results[i]["rerank_score"] = float(s)
+                    results[i]["rerank_method"] = "cross-encoder"
                 # Sort a copy: the caller keeps its own ranking to fall back on
                 ranked = sorted(results, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
                 return ranked[:top_k]
@@ -144,6 +145,7 @@ class Reranker:
                 + 0.25 * float(r.get("norm_semantic_score", r.get("semantic_score", 0.0)))
                 + 0.1 * float(r.get("norm_keyword_score", r.get("keyword_score", 0.0)))
             )
+            r["rerank_method"] = "heuristic"
         ranked = sorted(results, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
         return ranked[:top_k]
 

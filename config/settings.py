@@ -227,6 +227,12 @@ class RAGConfig:
         return int(value) if value else None
 
     @staticmethod
+    def RERANK_MIN_SCORE():
+        """Floor on the reranker's raw score below which a query gets no context; None disables it."""
+        value = os.getenv("RERANK_MIN_SCORE", "-3.0").strip().lower()
+        return None if value in ("", "none", "off") else float(value)
+
+    @staticmethod
     def VIETNAMESE_PREPROCESSING_ENABLED():
         return os.getenv("VIETNAMESE_PREPROCESSING_ENABLED", "True").lower() == "true"
 
@@ -245,10 +251,6 @@ class RAGConfig:
     @staticmethod
     def CONTEXT_EXPANSION_RADIUS():
         return int(os.getenv("CONTEXT_EXPANSION_RADIUS", "1"))
-
-    @staticmethod
-    def MIN_CONTEXT_CHUNKS():
-        return int(os.getenv("MIN_CONTEXT_CHUNKS", "2"))
 
     @staticmethod
     def USE_FAISS_INDEX():

@@ -205,45 +205,6 @@ class ContextRetriever:
         )
         return ordered
 
-    def _ensure_minimum_context(
-        self, results: List[Dict[str, Any]], documents: List[str]
-    ) -> List[Dict[str, Any]]:
-        """
-        Ensure minimum number of context chunks are included for comprehensive responses.
-        """
-        min_chunks = Config.RAG.MIN_CONTEXT_CHUNKS()
-
-        if len(results) >= min_chunks:
-            return results
-
-        logger.info(
-            f" Ensuring minimum {min_chunks} context chunks (current: {len(results)})"
-        )
-
-        # If we have fewer than minimum chunks, add more from the top results
-        if len(documents) > len(results):
-            # Get additional chunks that weren't in the top results
-            used_indices = {result["index"] for result in results}
-            available_indices = [
-                i for i in range(len(documents)) if i not in used_indices
-            ]
-
-            # Add more chunks up to minimum
-            additional_needed = min_chunks - len(results)
-            for i in range(min(additional_needed, len(available_indices))):
-                idx = available_indices[i]
-                results.append(
-                    {
-                        "document": documents[idx],
-                        "semantic_score": 0.0,  # Lower score for additional chunks
-                        "keyword_score": 0.0,
-                        "combined_score": 0.0,
-                        "index": idx,
-                    }
-                )
-
-        return results
-
     def _ensure_vector_store_loaded(self) -> None:
         """Load the vector store once, so every query is scored against the same index."""
         if getattr(self.vector_store, "embeddings", None) is not None:
@@ -252,6 +213,20 @@ class ContextRetriever:
             self.vector_store.load_vector_store()
         except Exception as e:
             logger.warning(f" Could not load vector store for search: {e}")
+
+    def _nothing_relevant(self, reranked: List[Dict[str, Any]]) -> bool:
+        """True when the best cross-encoder score is below RERANK_MIN_SCORE."""
+        floor = Config.RAG.RERANK_MIN_SCORE()
+        if floor is None or not reranked or not self.reranker.available():
+            return False
+        # Heuristic fallback scores are on a different scale
+        if not all(r.get("rerank_method") == "cross-encoder" for r in reranked):
+            return False
+        best = max(r.get("rerank_score", float("-inf")) for r in reranked)
+        if best >= floor:
+            return False
+        logger.info(f" Best reranker score {best:.2f} < floor {floor:.2f}: no relevant chunk, empty context")
+        return True
 
     @staticmethod
     def _merge_reranked(
@@ -486,6 +461,8 @@ class ContextRetriever:
             if Config.RAG.RERANKING_ENABLED() and self.reranker is not None:
                 try:
                     reranked = self.reranker.rerank(query, prelim_top_k, k)
+                    if self._nothing_relevant(reranked):
+                        return []
                     top_k_results = self._merge_reranked(prelim_top_k, reranked, k)
                 except Exception as e:
                     logger.warning(f" Reranking failed, using combined scores: {e}")
@@ -520,13 +497,10 @@ class ContextRetriever:
                     result["index"] = idx
                     expanded_results.append(result)
 
-            # Ensure minimum context chunks
-            final_results = self._ensure_minimum_context(expanded_results, documents)
-
             logger.info(
-                f" Hybrid search completed: {len(final_results)} results (expanded from {len(top_k_results)})"
+                f" Hybrid search completed: {len(expanded_results)} results (expanded from {len(top_k_results)})"
             )
-            return final_results
+            return expanded_results
 
         except Exception as e:
             logger.warning(f" Hybrid search failed: {e}")
