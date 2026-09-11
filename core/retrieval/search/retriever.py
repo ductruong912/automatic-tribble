@@ -24,7 +24,8 @@ class ContextRetriever:
     Combines semantic embeddings and keyword search (BM25) for optimal retrieval.
     """
 
-    def __init__(self, embedding_service=None, similarity_calculator=None, reranker=None):
+    def __init__(self, embedding_service=None, similarity_calculator=None, reranker=None,
+                 vector_store_provider=None):
         # Initialize core components for search and similarity calculation
         if embedding_service is None:
             self.embedding_service = get_embedding_service()
@@ -32,6 +33,9 @@ class ContextRetriever:
             self.embedding_service = embedding_service
 
         self.vector_store = OptimizedVectorStore()  # Use optimized vector store with FAISS/HDF5
+        # Callable returning (shared store, version); None keeps the private copy above
+        self._store_provider = vector_store_provider
+        self._store_version = None
         if similarity_calculator is None:
             self.similarity_calculator = SimilarityCalculator()
         else:
@@ -206,7 +210,17 @@ class ContextRetriever:
         return ordered
 
     def _ensure_vector_store_loaded(self) -> None:
-        """Load the vector store once, so every query is scored against the same index."""
+        """Follow the shared store when its version changes, else load the private copy once."""
+        if self._store_provider is not None:
+            try:
+                store, version = self._store_provider()
+            except Exception as e:
+                logger.warning(f" Shared vector store unavailable, keeping current copy: {e}")
+                store, version = None, self._store_version
+            if store is not None and version != self._store_version:
+                self.vector_store = store
+                self._store_version = version
+                logger.info(f" Retriever now uses shared vector store version {version}")
         if getattr(self.vector_store, "embeddings", None) is not None:
             return
         try:

@@ -254,7 +254,7 @@ class RAGConfig:
 
     @staticmethod
     def USE_FAISS_INDEX():
-        return os.getenv("USE_FAISS_INDEX", "True").lower() == "true"
+        return os.getenv("USE_FAISS_INDEX", "False").lower() == "true"
 
 
 class ChatConfig:

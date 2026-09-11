@@ -47,9 +47,17 @@ def get_chat_service() -> ChatService:
             if _chat_service is None:
                 from utils.performance import get_model_preloader
 
-                # Reuse the reranker already loaded by the preloader
+                preloader = get_model_preloader()
+
+                def shared_vector_store():
+                    """Current shared store and its version, reloaded first if an upload marked it stale."""
+                    preloader.get_vector_store_data()
+                    return preloader.get_model("vector_store"), preloader.get_vector_store_version()
+
+                # Reuse the reranker already loaded by the preloader; follow its vector store
                 context_retriever = ContextRetriever(
-                    reranker=get_model_preloader().get_model("reranker")
+                    reranker=preloader.get_model("reranker"),
+                    vector_store_provider=shared_vector_store,
                 )
                 chatbot_service = ChatbotService(context_retriever=context_retriever)
                 _chat_service = ChatService(chatbot_service=chatbot_service)
