@@ -57,39 +57,17 @@ class DoclingProcessor:
         self._scanned_extractor = None
 
     def _clear_memory_caches(self):
-        """Clear all memory caches to prevent memory accumulation."""
+        """Release transient Python and CUDA allocations after document processing."""
         try:
             import gc
+
+            gc.collect()
+
+            # Clear only PyTorch's documented CUDA allocator cache. Do not
+            # modify process-wide GC thresholds or inspect arbitrary modules.
             import torch
-            
-            # Clear Python garbage collection multiple times
-            for _ in range(3):
-                gc.collect()
-            
-            # Clear PyTorch GPU cache if available
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            
-            # Force garbage collection with aggressive settings
-            if hasattr(gc, 'set_threshold'):
-                gc.set_threshold(100, 10, 10)  # More aggressive garbage collection
-            
-            # Clear any potential caches in Docling (safer approach)
-            try:
-                # Only clear caches for known safe objects to avoid torch warnings
-                import sys
-                for module_name, module in sys.modules.items():
-                    if 'docling' in module_name.lower() and hasattr(module, '__dict__'):
-                        for attr_name, attr_value in module.__dict__.items():
-                            try:
-                                if hasattr(attr_value, 'clear_cache') and callable(getattr(attr_value, 'clear_cache')):
-                                    attr_value.clear_cache()
-                            except (AttributeError, TypeError, Exception):
-                                # Skip any problematic objects
-                                pass
-            except Exception:
-                pass
 
         except Exception as e:
             logger.debug(f"Cache clearing warning: {e}")
