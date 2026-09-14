@@ -109,7 +109,7 @@ class OptimizedVectorStore(VectorStore):
             return self.rebuild_vector_store()
         except Exception as e:
             logger.error(f" [OptimizedVectorStore Error] {e}")
-            return self.rebuild_vector_store()
+            raise
 
     def save_vector_store(self):
         """
@@ -246,6 +246,59 @@ class OptimizedVectorStore(VectorStore):
         
         logger.info(f" [OptimizedVectorStore] Rebuilt successfully: {len(all_documents)} documents")
         return None, embeddings, all_documents
+
+    def add_documents_batch(
+        self, documents_list: List[Dict], rebuild_at_end: bool = True
+    ) -> bool:
+        """Append new embeddings when the existing document order is unchanged.
+
+        Chunk storage already applies replacements before this method runs. If a
+        replacement removes or changes an old chunk, or if new chunks sort before
+        an existing chunk, rebuild the store so embeddings and metadata stay
+        index-aligned.
+        """
+        if not documents_list:
+            return False
+        if not rebuild_at_end:
+            return True
+
+        from core.storage.metadata_stores.document_store import DocumentStore
+        from core.storage.metadata_stores.metadata_store import MetadataStore
+
+        all_documents = DocumentStore().load_documents_from_chunks()
+        if not all_documents:
+            self.rebuild_vector_store()
+            return True
+
+        try:
+            if self.documents is None or self.embeddings is None:
+                self.load_vector_store()
+        except FileNotFoundError:
+            self.rebuild_vector_store()
+            return True
+
+        existing_documents = list(self.documents or [])
+        if all_documents[:len(existing_documents)] != existing_documents:
+            logger.info("[OptimizedVectorStore] Document order/content changed; rebuilding store")
+            self.rebuild_vector_store()
+            return True
+
+        new_documents = all_documents[len(existing_documents):]
+        if not new_documents:
+            logger.info("[OptimizedVectorStore] No new chunks; store is already current")
+            return True
+
+        new_embeddings = self.create_embeddings(new_documents)
+        all_metadata = MetadataStore().create_metadata_from_chunks(all_documents)
+        self.embeddings = np.vstack([self.embeddings, new_embeddings])
+        self.documents = all_documents
+        self.document_metadata = all_metadata
+        self.save_vector_store()
+        logger.info(
+            f"[OptimizedVectorStore] Appended {len(new_documents)} documents; "
+            f"store now contains {len(all_documents)} documents"
+        )
+        return True
 
     def _clear_vector_store_files(self):
         """Clear all vector store files when rebuilding with empty data."""

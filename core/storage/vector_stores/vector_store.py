@@ -75,7 +75,7 @@ class VectorStore:
             return self.rebuild_vector_store()
         except Exception as e:
             logger.error(f" [VectorStore Error] {e}")
-            return self.rebuild_vector_store()
+            raise
 
     def save_vector_store(self):
         """
@@ -203,33 +203,46 @@ class VectorStore:
         self, documents_list: List[Dict], rebuild_at_end: bool = True
     ) -> bool:
         """
-        Add multiple document sets efficiently with single rebuild at the end.
-        Optimizes performance by batching operations and minimizing rebuilds.
+        Add multiple document sets, appending embeddings when document order is stable.
+        Falls back to a full rebuild when existing chunks were replaced or reordered.
         """
-        try:
-            success_count = 0
-            for doc_info in documents_list:
-                # Add documents without rebuilding for efficiency
-                success = self.add_documents(
-                    doc_info["documents"],
-                    doc_info["metadata"],
-                    rebuild_immediately=False,
-                )
-                if success:
-                    success_count += 1
-
-            # Rebuild once at the end if requested for optimal performance
-            if rebuild_at_end and success_count > 0:
-                self.rebuild_vector_store()
-                print(
-                    f"🔄 [VectorStore] Batch adding {len(documents_list)} document sets"
-                )
-
-            return success_count > 0
-
-        except Exception as e:
-            print(f" Error in batch document addition: {e}")
+        if not documents_list:
             return False
+        if not rebuild_at_end:
+            return True
+
+        from core.storage.metadata_stores.document_store import DocumentStore
+        from core.storage.metadata_stores.metadata_store import MetadataStore
+
+        all_documents = DocumentStore().load_documents_from_chunks()
+        if not all_documents:
+            self.rebuild_vector_store()
+            return True
+
+        if self.documents is None or self.embeddings is None:
+            self.load_vector_store()
+
+        existing_documents = list(self.documents or [])
+        if all_documents[:len(existing_documents)] != existing_documents:
+            logger.info("[VectorStore] Document order/content changed; rebuilding store")
+            self.rebuild_vector_store()
+            return True
+
+        new_documents = all_documents[len(existing_documents):]
+        if not new_documents:
+            logger.info("[VectorStore] No new chunks; store is already current")
+            return True
+
+        new_embeddings = self.create_embeddings(new_documents)
+        self.embeddings = np.vstack([self.embeddings, new_embeddings])
+        self.documents = all_documents
+        self.document_metadata = MetadataStore().create_metadata_from_chunks(all_documents)
+        self.save_vector_store()
+        logger.info(
+            f"[VectorStore] Appended {len(new_documents)} documents; "
+            f"store now contains {len(all_documents)} documents"
+        )
+        return True
 
     def get_embeddings(self) -> Optional[np.ndarray]:
         """
