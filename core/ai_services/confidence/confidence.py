@@ -5,7 +5,7 @@ Assesses response quality and reliability based on multiple factors including co
 
 import logging
 import re
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -32,56 +32,9 @@ class ConfidenceScorer:
     """
 
     def __init__(self):
-        # Linguistic patterns that indicate uncertainty or low confidence
-        self.uncertainty_phrases = [
-            "i think",
-            "i believe",
-            "possibly",
-            "maybe",
-            "perhaps",
-            "might be",
-            "could be",
-            "seems like",
-            "appears to",
-            "not sure",
-            "uncertain",
-            "unclear",
-            "unknown",
-            "i don't know",
-            "i'm not certain",
-            "it depends",
-            "to the best of my knowledge",
-            "as far as i know",
-        ]
-
-        # Linguistic patterns that indicate high confidence
-        self.confidence_phrases = [
-            "definitely",
-            "certainly",
-            "absolutely",
-            "clearly",
-            "obviously",
-            "without doubt",
-            "for sure",
-            "the answer is",
-            "this is",
-            "specifically",
-            "according to",
-            "based on",
-            "as stated in",
-        ]
-
-        # Regex patterns for detecting source citations in responses
-        self.citation_patterns = [
-            r"according to [^.]*",
-            r"as mentioned in [^.]*",
-            r"based on [^.]*",
-            r"from [^.]*",
-            r"in [^.]* it states",
-            r"[^.]* shows that",
-            r"[^.]* indicates",
-            r"[^.]* demonstrates",
-        ]
+        # Confidence must be grounded in the retrieved evidence. Do not use
+        # language-specific filler or confidence phrases as evidence.
+        self._token_pattern = re.compile(r"\b\w{2,}\b", re.UNICODE)
 
     def calculate_confidence(
         self,
@@ -119,11 +72,13 @@ class ConfidenceScorer:
             factors["semantic_coherence"] = self._calculate_semantic_coherence(response)
 
             # 4. Source citation - whether response cites sources from context
-            factors["source_citation"] = self._calculate_source_citation(response)
+            factors["source_citation"] = self._calculate_source_citation(
+                response, context, search_results
+            )
 
             # 5. Uncertainty indicators - presence of uncertainty markers
             factors["uncertainty_indicators"] = self._calculate_uncertainty_score(
-                response
+                response, context
             )
 
             # Calculate overall score using weighted average of all factors
@@ -182,16 +137,16 @@ class ConfidenceScorer:
         if not context or not context.strip():
             return 0.3  # Low score when no context available
 
-        # Extract key terms from context and response for comparison
-        context_words = set(re.findall(r"\b\w{4,}\b", context.lower()))
-        response_words = set(re.findall(r"\b\w{4,}\b", response.lower()))
+        context_words = self._content_tokens(context)
+        response_words = self._content_tokens(response)
 
         if not context_words:
             return 0.5
 
-        # Calculate word overlap between context and response
+        # Measure how much of the answer's substantive vocabulary is supported
+        # by the retrieved context. This works for Vietnamese and HTML alike.
         overlap = len(context_words.intersection(response_words))
-        word_alignment = min(1.0, overlap / len(context_words))
+        word_alignment = overlap / len(response_words) if response_words else 0.0
 
         # Check if response length is appropriate for context length
         context_length = len(context)
@@ -209,13 +164,11 @@ class ConfidenceScorer:
         else:
             length_score = 0.5
 
-        # Consider search result quality scores if available
-        search_score = 0.5
+        # Retrieval quality is supporting evidence, not a language heuristic.
+        search_score = 0.0
         if search_results and len(search_results) > 0:
-            avg_score = sum(r.get("combined_score", 0) for r in search_results) / len(
-                search_results
-            )
-            search_score = min(1.0, avg_score)
+            scores = [float(r.get("combined_score", 0.0)) for r in search_results]
+            search_score = sum(max(0.0, min(1.0, score)) for score in scores) / len(scores)
 
         # Combine all alignment factors with appropriate weights
         alignment_score = word_alignment * 0.4 + length_score * 0.3 + search_score * 0.3
@@ -256,95 +209,81 @@ class ConfidenceScorer:
                 return max(0.0, 1.0 - (response_words - 200) / 200)
 
     def _calculate_semantic_coherence(self, response: str) -> float:
-        """Calculate semantic coherence of response."""
-        sentences = re.split(r"[.!?]+", response)
+        """Estimate structural coherence without language-specific connectors."""
+        sentences = re.split(r"[.!?\n]+", response)
         sentences = [s.strip() for s in sentences if s.strip()]
 
-        if len(sentences) <= 1:
-            return 1.0  # Single sentence is coherent
-
-        # Check for logical connectors
-        connectors = [
-            "however",
-            "therefore",
-            "furthermore",
-            "additionally",
-            "moreover",
-            "consequently",
-            "thus",
-            "hence",
-            "also",
-            "first",
-            "second",
-            "third",
-            "finally",
-            "in conclusion",
-        ]
-
-        connector_count = sum(
-            1
-            for sentence in sentences
-            for connector in connectors
-            if connector in sentence.lower()
-        )
-
-        # Check for repetition (negative indicator)
-        words = response.lower().split()
-        unique_words = set(words)
-        repetition_ratio = len(unique_words) / len(words) if words else 1.0
-
-        # Calculate coherence score
-        connector_score = min(1.0, connector_count / len(sentences))
-        repetition_score = repetition_ratio
-
-        coherence_score = connector_score * 0.6 + repetition_score * 0.4
-        return min(1.0, max(0.0, coherence_score))
-
-    def _calculate_source_citation(self, response: str) -> float:
-        """Calculate source citation score."""
-        citation_count = 0
-
-        # Check for citation patterns
-        for pattern in self.citation_patterns:
-            matches = re.findall(pattern, response, re.IGNORECASE)
-            citation_count += len(matches)
-
-        # Check for confidence phrases (positive indicator)
-        confidence_count = sum(
-            1 for phrase in self.confidence_phrases if phrase in response.lower()
-        )
-
-        # Calculate citation score
-        if citation_count > 0:
-            citation_score = min(1.0, citation_count / 3)  # Cap at 3 citations
-        else:
-            citation_score = 0.0
-
-        confidence_bonus = min(
-            0.2, confidence_count * 0.05
-        )  # Small bonus for confidence
-
-        return min(1.0, citation_score + confidence_bonus)
-
-    def _calculate_uncertainty_score(self, response: str) -> float:
-        """Calculate uncertainty score (lower is better for confidence)."""
-        response_lower = response.lower()
-
-        uncertainty_count = sum(
-            1 for phrase in self.uncertainty_phrases if phrase in response_lower
-        )
-
-        # Convert to confidence score (fewer uncertainty phrases = higher confidence)
-        if uncertainty_count == 0:
+        if not sentences:
+            return 0.0
+        if len(sentences) == 1:
             return 1.0
-        elif uncertainty_count == 1:
-            return 0.8
-        elif uncertainty_count == 2:
-            return 0.6
-        elif uncertainty_count == 3:
-            return 0.4
-        else:
-            return max(0.0, 1.0 - (uncertainty_count - 3) * 0.1)
+
+        sentence_lengths = [len(self._content_tokens(sentence)) for sentence in sentences]
+        non_empty_ratio = sum(length > 0 for length in sentence_lengths) / len(sentences)
+        mean_length = sum(sentence_lengths) / len(sentence_lengths)
+        length_variation = (
+            sum(abs(length - mean_length) for length in sentence_lengths)
+            / (len(sentence_lengths) * mean_length)
+            if mean_length
+            else 1.0
+        )
+        repetition_score = self._repetition_score(response)
+        structure_score = max(0.0, 1.0 - min(1.0, length_variation))
+        return min(1.0, max(0.0, non_empty_ratio * (0.45 * repetition_score + 0.55 * structure_score)))
+
+    def _calculate_source_citation(
+        self,
+        response: str,
+        context: str,
+        search_results: Optional[List[Dict[str, Any]]] = None,
+    ) -> float:
+        """Score explicit chunk references and evidence overlap, not wording."""
+        if not context.strip():
+            return 0.0
+
+        chunk_references = set(re.findall(r"\[chunk\s+(\d+)\]", response, re.IGNORECASE))
+        available_chunks = set(re.findall(r"\[chunk\s+(\d+)\]", context, re.IGNORECASE))
+        citation_score = (
+            len(chunk_references.intersection(available_chunks)) / len(chunk_references)
+            if chunk_references
+            else 0.0
+        )
+        overlap_score = self._token_overlap(response, context)
+        retrieval_score = self._retrieval_score(search_results)
+        return min(1.0, 0.5 * citation_score + 0.35 * overlap_score + 0.15 * retrieval_score)
+
+    def _calculate_uncertainty_score(self, response: str, context: str) -> float:
+        """Estimate evidence sufficiency; the value is retained for API compatibility."""
+        if not response.strip():
+            return 0.0
+        if not context.strip():
+            return 0.25
+        return self._token_overlap(response, context)
+
+    def _content_tokens(self, text: str) -> Set[str]:
+        """Return normalized content tokens while ignoring HTML tags and chunk labels."""
+        without_markup = re.sub(r"<[^>]+>|\[/?chunk\s+\d+\]", " ", text, flags=re.IGNORECASE)
+        return {token.lower() for token in self._token_pattern.findall(without_markup)}
+
+    def _token_overlap(self, response: str, context: str) -> float:
+        response_tokens = self._content_tokens(response)
+        context_tokens = self._content_tokens(context)
+        if not response_tokens or not context_tokens:
+            return 0.0
+        return len(response_tokens & context_tokens) / len(response_tokens)
+
+    def _retrieval_score(self, search_results: Optional[List[Dict[str, Any]]]) -> float:
+        if not search_results:
+            return 0.0
+        scores = [float(result.get("combined_score", 0.0)) for result in search_results]
+        return sum(max(0.0, min(1.0, score)) for score in scores) / len(scores)
+
+    def _repetition_score(self, response: str) -> float:
+        tokens = self._content_tokens(response)
+        all_tokens = self._token_pattern.findall(response.lower())
+        if not all_tokens:
+            return 0.0
+        return len(tokens) / len(all_tokens)
 
     def _generate_reasoning(
         self, factors: Dict[str, float], overall_score: float
