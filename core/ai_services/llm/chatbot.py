@@ -7,6 +7,7 @@ import logging
 import time
 import asyncio
 import hashlib
+import re
 import threading
 from typing import Dict, Any, List, Optional, AsyncGenerator, Union, cast
 from ...infrastructure.caching.cache_service import get_cache_service
@@ -85,6 +86,30 @@ def _build_context(search_results: List[Dict[str, Any]], max_length: int) -> str
         logger.debug(f"Context budget {max_length} chars: kept {len(parts)}, dropped {dropped}")
 
     return "\n".join(parts)
+
+
+# Follow-up phrasing and function words: what is left after removing them is the query's own topic
+_FOLLOW_UP_PHRASES = [
+    "giải thích", "tại sao", "vì sao", "làm thế nào", "làm sao", "như thế nào", "thế nào",
+    "bằng cách nào", "cách nào", "thông tin", "chi tiết", "cụ thể", "nói rõ", "được không",
+    "sử dụng", "đầy đủ", "toàn bộ", "tất cả", "hoàn chỉnh", "cho tôi", "cho biết", "biết thêm",
+    "vui lòng",
+]
+_FILLER_WORDS = {
+    "thêm", "hơn", "rõ", "không", "đi", "để", "về", "cho", "tôi", "mình", "biết", "với", "vậy",
+    "thì", "là", "có", "được", "ạ", "nhé", "nữa", "gì", "dùng", "ra", "nào", "sao",
+    "bạn", "ơi", "nhỉ", "thế", "à", "cần",
+    "more", "details", "explain", "information", "how", "why", "what", "please", "the", "it",
+    "this", "that", "about", "to", "use",
+}
+
+
+def _content_words(query: str) -> List[str]:
+    """Words of the query that name its own subject, follow-up phrasing removed."""
+    text = query.lower()
+    for phrase in _FOLLOW_UP_PHRASES:
+        text = re.sub(rf"(?<!\w){phrase}(?!\w)", " ", text)
+    return [w for w in re.findall(r"\w+", text) if w not in _FILLER_WORDS]
 
 
 class ChatbotService:
@@ -365,9 +390,7 @@ class ChatbotService:
 
     def _get_cache_key(self, query: str, context: str) -> str:
         """Generate MD5-based cache key from query and context for efficient caching."""
-        # Use only query for cache key to enable better caching
-        # Context varies but similar queries should be cached
-        content = f"{query.lower().strip()}"
+        content = f"query:{query.lower().strip()}\ncontext:{context}"
         return hashlib.md5(content.encode()).hexdigest()[:16]
 
     def _get_cached_response(self, cache_key: str) -> Optional[str]:
@@ -832,33 +855,34 @@ class ChatbotService:
                 logger.info(f"   Has entity: {query_intent.get('has_entity')}, Has WH-word: {query_intent.get('has_wh_word')}")
                 return query
             
-            # RULE 2: Check semantic similarity for follow-up queries
-            # This catches topic changes even when intent detection is uncertain
-            is_semantically_related = self._check_semantic_relevance(query, context_info)
-            
-            # RULE 3: For follow-up queries, require EITHER:
-            # - Strong follow-up indicators (pronouns: nó, đó, này OR detail requests: cho tôi, biết thêm), OR
-            # - Semantic similarity with context
+            # RULE 2/3: For follow-up queries without a strong indicator:
+            # - Vague ("giải thích thêm", "tại sao?"): search with the last real question's subject
+            # - Names its own subject: search it as asked
             if query_intent.get("type") == "follow_up":
                 strong_follow_up_indicators = [
                     # Pronouns (strongest signal)
                     "nó", "đó", "này", "chúng",
                     # Detail requests (strong signal)
-                    "cho tôi", "cho biết", "biết thêm", "chi tiết hơn", 
+                    "cho tôi", "cho biết", "biết thêm", "chi tiết hơn",
                     "thông tin chi tiết", "cụ thể hơn"
                 ]
                 has_strong_follow_up = any(indicator in query.lower() for indicator in strong_follow_up_indicators)
-                
-                # If has strong indicator, always enrich (regardless of semantic similarity)
+
+                # If has strong indicator, always enrich
                 if has_strong_follow_up:
                     logger.info(f"🔗 Strong follow-up indicator detected - enriching: '{query}'")
-                elif not is_semantically_related:
-                    # No strong indicator AND low semantic similarity = likely topic change
-                    logger.info(f"🔀 Topic change detected (no strong indicator + low semantic) - skipping enrichment: '{query}'")
-                    logger.info(f"   Query lacks strong follow-up indicators and low semantic similarity")
+                elif _content_words(query):
+                    # Appended keyword context mislabels the topic, so keep the query as asked
+                    logger.info(f"🔀 Follow-up names its own subject - skipping enrichment: '{query}'")
                     return query
+                else:
+                    subject = self._last_subject_question(history)
+                    if subject:
+                        enriched_query = f"{query} ({subject})"
+                        logger.info(f"🔗 Vague follow-up - borrowing last question: '{query}' -> '{enriched_query}'")
+                        return enriched_query
             
-            # RULE 4: Enrich if it's a follow-up AND (has pronoun OR semantically related)
+            # RULE 4: Enrich strong follow-ups and brief queries with keyword context
             if query_intent.get("needs_context", False) and context_info.get("has_relevant_context", False):
                 enriched_query = self._enrich_based_on_intent(query, query_intent, context_info)
                 
@@ -1025,65 +1049,17 @@ class ChatbotService:
             "main_topic": main_topic,
             "has_relevant_context": bool(products or topics),
             "last_assistant_response_length": len(last_assistant_response),
-            "last_assistant_response": last_assistant_response[:500]  # Keep recent context for semantic check
+            "last_assistant_response": last_assistant_response[:500]  # Keep recent context
         }
     
-    def _check_semantic_relevance(self, query: str, context_info: Dict[str, Any]) -> bool:
-        """
-        Check if query is semantically related to conversation context using embeddings.
-        
-        Args:
-            query: User query
-            context_info: Extracted conversation context
-            
-        Returns:
-            True if query is semantically related to context, False otherwise
-        """
-        try:
-            # If no context, can't check relevance
-            last_response = context_info.get("last_assistant_response", "")
-            if not last_response or len(last_response) < 10:
-                return True  # No context to compare, assume related
-            
-            # Get embeddings for query and last response
-            from core.ai_services.embeddings.embeddings import EmbeddingService
-            embedder = EmbeddingService()
-            
-            query_embedding = embedder.encode(query, convert_to_numpy=True)
-            context_embedding = embedder.encode(last_response, convert_to_numpy=True)
-            
-            # Calculate cosine similarity
-            import numpy as np
-            
-            # Flatten embeddings if they are 2D
-            if query_embedding.ndim > 1:
-                query_embedding = query_embedding.flatten()
-            if context_embedding.ndim > 1:
-                context_embedding = context_embedding.flatten()
-            
-            similarity = np.dot(query_embedding, context_embedding) / (
-                np.linalg.norm(query_embedding) * np.linalg.norm(context_embedding)
-            )
-            
-            # Threshold for semantic relevance
-            # Higher threshold (0.6) = stricter matching
-            # Lower threshold (0.4) = more lenient
-            SEMANTIC_THRESHOLD = 0.5
-            
-            is_related = similarity >= SEMANTIC_THRESHOLD
-            
-            logger.info(f"🔍 Semantic similarity: {similarity:.3f} (threshold: {SEMANTIC_THRESHOLD})")
-            logger.info(f"   Query: '{query}'")
-            logger.info(f"   Context: '{last_response[:100]}...'")
-            logger.info(f"   Related: {'✅ YES' if is_related else '❌ NO'}")
-            
-            return is_related
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Semantic relevance check failed: {e}")
-            # On error, default to True (be conservative)
-            return True
-    
+    @staticmethod
+    def _last_subject_question(history: List[Dict[str, str]]) -> Optional[str]:
+        """Most recent user question that names a subject, skipping earlier vague follow-ups."""
+        for msg in reversed(history):
+            if msg.get("role") == "user" and _content_words(msg.get("content", "")):
+                return msg["content"].strip()[:300]
+        return None
+
     def _enrich_based_on_intent(self, query: str, intent: Dict[str, Any], context: Dict[str, Any]) -> str:
         """
         Enrich query based on analyzed intent and conversation context.

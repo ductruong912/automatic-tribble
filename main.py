@@ -168,9 +168,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add compression middleware for faster responses
-from fastapi.middleware.gzip import GZipMiddleware
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+# Add compression middleware for faster responses; the SSE chat stream is left uncompressed
+from api.middleware import StreamingSafeGZipMiddleware
+app.add_middleware(StreamingSafeGZipMiddleware, minimum_size=1000, exclude_paths=("/chat",))
 
 # Include API routes from the router module
 app.include_router(router)

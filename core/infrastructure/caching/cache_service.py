@@ -8,10 +8,6 @@ import hashlib
 import logging
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
-import json
-import pickle
-import os
-from pathlib import Path
 
 # Local imports
 from config.settings import Config
@@ -52,10 +48,6 @@ class SmartCacheService:
         
         # Embedding cache for faster similarity matching
         self._embedding_cache: Dict[str, Any] = {}
-        
-        # Persistent cache file
-        self._cache_file = os.path.join(Config.File.TEMP_DIR(), "smart_cache.pkl")
-        self._load_persistent_cache()
         
         logger.info(f" SmartCacheService initialized: max_size={self._max_size}, ttl={self._ttl_seconds}s")
 
@@ -184,14 +176,14 @@ class SmartCacheService:
         return cache_key
 
     def get(self, query: str, context_hash: str = "", 
-            use_similarity: bool = True) -> Optional[Any]:
-        """
-        Retrieve response from cache with similarity matching.
+            use_similarity: bool = False) -> Optional[Any]:
+        """Retrieve a response from the cache using an exact query/context key.
         
         Args:
             query: User query
             context_hash: Hash of context
-            use_similarity: Whether to use semantic similarity matching
+            use_similarity: Deprecated compatibility flag. Similarity matching is
+                disabled by default because it cannot prove the context is the same.
             
         Returns:
             Cached response if found, None otherwise
@@ -215,7 +207,9 @@ class SmartCacheService:
             logger.debug(f" Cache hit (exact): {query[:50]}...")
             return entry.value
         
-        # Try similarity matching if enabled
+        # Similarity matching is opt-in for legacy callers. It is unsafe for
+        # context-dependent responses because the stored entry has no matching
+        # context guarantee.
         if use_similarity:
             similar_key = self._find_similar_query(query)
             if similar_key and similar_key in self._cache:
@@ -258,58 +252,6 @@ class SmartCacheService:
             "hit_rate": f"{hit_rate:.1f}%",
             "embedding_cache_size": len(self._embedding_cache)
         }
-
-    def _load_persistent_cache(self):
-        """Load cache from persistent storage."""
-        try:
-            if os.path.exists(self._cache_file):
-                with open(self._cache_file, 'rb') as f:
-                    data = pickle.load(f)
-                    self._cache = data.get('cache', {})
-                    self._embedding_cache = data.get('embedding_cache', {})
-                    
-                # Clean expired entries on load
-                self._evict_expired()
-                
-                logger.info(f"📂 Loaded {len(self._cache)} cache entries from persistent storage")
-        except Exception as e:
-            logger.warning(f" Failed to load persistent cache: {e}")
-            self._cache = {}
-            self._embedding_cache = {}
-
-    def save_persistent_cache(self):
-        """Save cache to persistent storage."""
-        try:
-            os.makedirs(os.path.dirname(self._cache_file), exist_ok=True)
-            
-            # Only save recent, high-confidence entries
-            filtered_cache = {}
-            current_time = time.time()
-            
-            for key, entry in self._cache.items():
-                # Keep entries that are recent or frequently accessed
-                age_hours = (current_time - entry.timestamp) / 3600
-                if (age_hours < 24 and entry.access_count > 0) or entry.access_count > 3:
-                    filtered_cache[key] = entry
-            
-            data = {
-                'cache': filtered_cache,
-                'embedding_cache': self._embedding_cache
-            }
-            
-            with open(self._cache_file, 'wb') as f:
-                pickle.dump(data, f)
-                
-            logger.info(f"💾 Saved {len(filtered_cache)} cache entries to persistent storage")
-            
-        except Exception as e:
-            logger.warning(f" Failed to save persistent cache: {e}")
-
-    def cleanup_on_shutdown(self):
-        """Cleanup method to be called on application shutdown."""
-        self.save_persistent_cache()
-        logger.info("🛑 Cache service shutdown cleanup completed")
-
 
 # Global cache service instance
 _cache_service_instance = None

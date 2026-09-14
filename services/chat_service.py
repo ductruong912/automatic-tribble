@@ -100,10 +100,17 @@ class ChatService:
     def _get_cached_search_results(self, query: str, embeddings, documents, k: int, semantic_weight: float):
         """Get cached search results using the existing smart cache service."""
         import hashlib
-        context_hash = f"{len(documents)}_{k}_{semantic_weight}"
+        context_fingerprint = hashlib.sha256()
+        for document in documents:
+            encoded_document = str(document).encode("utf-8")
+            context_fingerprint.update(len(encoded_document).to_bytes(8, "big"))
+            context_fingerprint.update(encoded_document)
+        context_hash = hashlib.sha256(
+            f"{context_fingerprint.hexdigest()}|{k}|{semantic_weight}".encode()
+        ).hexdigest()
         
         # Try to get from smart cache first
-        cached_results = self._smart_cache.get(query, context_hash, use_similarity=True)
+        cached_results = self._smart_cache.get(query, context_hash)
         if cached_results is not None:
             logger.debug("⚡ Using cached search results from smart cache")
             return cached_results
