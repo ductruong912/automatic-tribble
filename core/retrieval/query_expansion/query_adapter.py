@@ -40,14 +40,23 @@ def compute_query_adapter(
 def save_query_adapter(adapter: np.ndarray, path: str) -> None:
     import os
     from pathlib import Path
-    Path(os.path.dirname(path)).mkdir(parents=True, exist_ok=True)
-    np.save(path, adapter)
-    logger.info(f" Saved query adapter to {path}")
+    # Normalize path: avoid saving .pkl or .pkl.npy when .npy is expected
+    clean_path = path[:-4] + ".npy" if path.endswith(".pkl") else (path if path.endswith(".npy") else f"{path}.npy")
+    Path(os.path.dirname(clean_path)).mkdir(parents=True, exist_ok=True)
+    np.save(clean_path, adapter)
+    logger.info(f" Saved query adapter to {clean_path}")
 
 
 def load_query_adapter(path: str) -> np.ndarray:
     """Load query adapter numpy matrix from disk."""
-    return np.load(path)
+    from pathlib import Path
+    p = Path(path)
+    if not p.exists():
+        npy_path = p.with_suffix(".npy")
+        if npy_path.exists():
+            return np.load(str(npy_path))
+    return np.load(str(p))
+
 
 
 def build_from_evals(

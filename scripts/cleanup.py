@@ -42,7 +42,12 @@ def cleanup_data_directories():
 
 def cleanup_logs():
     """Clean up log files."""
-    log_dir = "data/logs"
+    try:
+        from config.settings import Config
+        log_dir = Config.Logging.LOG_DIR()
+    except Exception:
+        log_dir = "data/logs"
+
     if os.path.exists(log_dir):
         print(f"[*] Cleaning logs in {log_dir}...")
         for file in os.listdir(log_dir):
@@ -55,7 +60,11 @@ def cleanup_logs():
 
 def cleanup_temp_files():
     """Clean up temporary files."""
-    temp_dirs = ["data/temp", "__pycache__"]
+    try:
+        from config.settings import Config
+        temp_dirs = [Config.Database.TEMP_DIR()]
+    except Exception:
+        temp_dirs = ["data/temp"]
     
     for directory in temp_dirs:
         if os.path.exists(directory):

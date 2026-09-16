@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Simple Model Response Tester
+Model Response Debugging Script
 
 A focused script to test the complete RAG pipeline and show the model's response.
 Shows the query, retrieved context, and the final model response.
 
 Usage:
-    python -m test.test_model_response "your_query_here"
+    python scripts/debug_model_response.py "your_query_here"
 """
 
 import os
@@ -17,7 +17,7 @@ import numpy as np
 from pathlib import Path
 
 # Add project root to path
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Load environment variables
@@ -40,13 +40,13 @@ class ModelResponseTester:
     def __init__(self):
         """Initialize the model response tester."""
         self.retriever = ContextRetriever()
+        self.chatbot_service = ChatbotService(context_retriever=self.retriever)
         # Preload retriever's vector store to ensure metadata is available
         try:
             self.retriever.vector_store.load_vector_store()
         except Exception:
             pass
         self.vector_store = OptimizedVectorStore()
-        self.chatbot_service = ChatbotService(context_retriever=self.retriever)
         
         print(" Initializing Model Response Tester...")
         print()

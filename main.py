@@ -1,10 +1,11 @@
 # Standard library imports
 import logging
+import logging.handlers
 import argparse
 from contextlib import asynccontextmanager
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 # Third-party imports
 import uvicorn
@@ -32,10 +33,92 @@ from core.ai_services.embeddings.embeddings import get_embedding_service
 from core.storage.vector_stores.vector_store_optimized import OptimizedVectorStore
 from utils.performance import start_background_tasks, stop_background_tasks
 from utils.performance import preload_all_models, get_model_preloader
-# File watching functionality removed
+# Logging initialization state
+_file_handler: Optional[logging.Handler] = None
+_logging_configured: bool = False
+
+
+def setup_logging() -> logging.Logger:
+    """
+    Configure root and uvicorn logging with console and file handlers.
+    Ensures log directory and file handler are initialized even when running
+    via `uvicorn main:app` (e.g. in Docker) where main() is not executed.
+    """
+    global _file_handler, _logging_configured
+
+    log_dir = Config.Logging.LOG_DIR()
+    os.makedirs(log_dir, exist_ok=True)
+
+    root_logger = logging.getLogger()
+    log_level = getattr(logging, Config.Logging.LOG_LEVEL().upper(), logging.INFO)
+    root_logger.setLevel(log_level)
+
+    if not _logging_configured:
+        handlers: List[logging.Handler] = []
+
+        if Config.Logging.LOG_TO_FILE():
+            log_filename = f"chatbot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+            log_filepath = os.path.join(log_dir, log_filename)
+            try:
+                from logging.handlers import RotatingFileHandler
+
+                _file_handler = RotatingFileHandler(
+                    log_filepath,
+                    maxBytes=Config.Logging.LOG_MAX_SIZE(),
+                    backupCount=Config.Logging.LOG_BACKUP_COUNT(),
+                    encoding="utf-8",
+                )
+            except Exception:
+                _file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
+
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            _file_handler.setFormatter(formatter)
+            _file_handler.setLevel(log_level)
+            handlers.append(_file_handler)
+
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+        stream_handler.setLevel(log_level)
+        handlers.append(stream_handler)
+
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            handlers=handlers,
+            force=True,
+        )
+        _logging_configured = True
+
+    # Attach file handler to uvicorn loggers so access and server logs are also captured
+    if _file_handler:
+        for uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+            u_logger = logging.getLogger(uvicorn_logger_name)
+            if not any(
+                isinstance(
+                    h,
+                    (
+                        logging.FileHandler,
+                        getattr(logging.handlers, "RotatingFileHandler", ()),
+                    ),
+                )
+                for h in u_logger.handlers
+            ):
+                u_logger.addHandler(_file_handler)
+
+    return root_logger
+
+
+# Initialize logging immediately on module import so all subsequent operations are logged
+setup_logging()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     logger = logging.getLogger()
     workers = Config.Server.UVICORN_WORKERS()
     display_host = (
@@ -193,33 +276,12 @@ app.include_router(models_router)
 
 
 def main():
+    # Ensure logging is initialized
+    setup_logging()
+
     # DEBUG: Print configuration values
     print(f"DEBUG: ServerConfig.PORT = {Config.Server.PORT()}")
     print(f"DEBUG: ServerConfig.HOST = {Config.Server.HOST()}\n")
-
-    # Ensure log directory exists before any other imports
-    log_dir = os.path.join('data', 'logs')
-    os.makedirs(log_dir, exist_ok=True)
-
-    # Create log filename with timestamp
-    log_filename = f"chatbot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    log_filepath = os.path.join(log_dir, log_filename)
-
-    # Configure logging as early as possible, force override
-    handlers = []
-    if Config.Logging.LOG_TO_FILE():
-        handlers.append(logging.FileHandler(log_filepath, encoding="utf-8"))
-    handlers.append(logging.StreamHandler())
-
-    logging.basicConfig(
-        level=getattr(logging, Config.Logging.LOG_LEVEL().upper(), logging.INFO),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=handlers,
-        force=True
-    )
-
-    logger = logging.getLogger()  # Use root logger
-    logger.info("TEST LOG: Main app logging system initialized and writing to file.\n")
 
     # Add WORKERS config using ServerConfig with performance optimization
     DEFAULT_WORKERS = min(2, Config.Server.UVICORN_WORKERS())  # Limit workers for better memory management

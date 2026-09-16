@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Chunk Ranking Tester
+Chunk Ranking Debugging Script
 
 A focused script to test and visualize chunk ranking and scoring in the RAG system.
 Shows detailed scoring breakdown for semantic and keyword search components.
 
 Usage:
-    python -m test.test_chunk_ranking "your_query_here"
+    python scripts/debug_chunk_ranking.py "your_query_here"
 """
 
 import os
@@ -17,7 +17,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 
 # Add project root to path
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Load environment variables

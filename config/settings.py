@@ -53,7 +53,8 @@ class LLMConfig:
 
     @staticmethod
     def OPENAI_MAX_TOKENS():
-        return int(os.getenv("OPENAI_MAX_TOKENS", "4000"))
+        return int(os.getenv("OPENAI_MAX_TOKENS", "5000"))
+
 
     @staticmethod
     def OPENAI_TEMPERATURE():
@@ -215,7 +216,12 @@ class RAGConfig:
 
     @staticmethod
     def QUERY_ADAPTER_PATH():
-        return os.getenv("QUERY_ADAPTER_PATH", "data/query_adapter.pkl")
+        return (
+            os.getenv("QUERY_ADAPTER_PATH")
+            or os.getenv("RAG_QUERY_ADAPTER_PATH")
+            or "data/query_adapter.npy"
+        )
+
 
     @staticmethod
     def RETRIEVAL_TOP_K():
@@ -419,23 +425,17 @@ class Config:
 
     @staticmethod
     def validate():
-        """Validate critical configuration settings."""
+        """Validate critical configuration settings and initialize required directories."""
         logger = __import__("logging").getLogger(__name__)
 
-        # Check for required OpenAI API key
-        if not Config.LLM.OPENAI_API_KEY():
-            logger.warning(
-                " Warning: OPENAI_API_KEY not set. Chat functionality may not work."
-            )
-            return False
-
-        # Create necessary directories
+        # Create necessary directories first so paths are ready even if API key is missing
         from utils.file_operations.file_manager import FileManager
 
         directories = [
             DatabaseConfig.CHUNKS_DIR(),
             DatabaseConfig.VECTORS_DIR(),
             DatabaseConfig.TEMP_DIR(),
+            LoggingConfig.LOG_DIR(),
         ]
         for directory in directories:
             FileManager.ensure_directory_exists(directory)
@@ -444,4 +444,12 @@ class Config:
         FileManager.ensure_directory_exists(
             os.path.dirname(DatabaseConfig.VECTOR_STORE_PATH())
         )
+
+        # Check for required OpenAI API key
+        if not Config.LLM.OPENAI_API_KEY():
+            logger.warning(
+                " Warning: OPENAI_API_KEY not set. Chat functionality may not work."
+            )
+            return False
+
         return True

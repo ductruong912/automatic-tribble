@@ -26,7 +26,7 @@ This project follows a **domain-driven design** approach with clear separation o
 
 ## Features
 
-- **Multi-format Support:** PDF, DOCX, DOC, TXT, CSV, XLSX, XLS, PPTX, PPT, Images, Audio, EPUB, ZIP
+- **Multi-format Support:** PDF, DOCX, TXT, CSV, XLSX (with automatic scanned PDF OCR processing)
 - **Docling Integration:** Document conversion to LLM-friendly Markdown format
 - **Scan-aware PDF handling:** Pages are classified per page - a real text layer is read directly, only scanned pages go through OCR
 - **Pluggable OCR:** Switch engines with `OCR_ENGINE` (`easyocr` for Vietnamese accuracy, `rapidocr` for speed); models download automatically, no external binary to install
@@ -43,8 +43,8 @@ This project follows a **domain-driven design** approach with clear separation o
 
 **1. Clone & Configure**
 ```bash
-git clone https://github.com/lcduc/automatic-octo-computing-machines.git
-cd automatic-octo-computing-machine
+git clone https://github.com/ductruong912/automatic-tribble.git
+cd automatic-tribble
 
 # Create environment file
 echo "OPENAI_API_KEY=your_api_key_here" > .env
@@ -130,7 +130,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 
 - **FastAPI Server**: http://localhost:8500
 - **API Documentation**: http://localhost:8500/docs
-- **Streamlit UI**: `streamlit run app.py` (runs on http://localhost:8501)
+- **Streamlit UI**: `streamlit run app.py` (runs on http://localhost:8505)
 
 **To check your CUDA version:**  
 - Run `nvidia-smi` in your terminal  
@@ -150,7 +150,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 ### Chat & AI
 | Endpoint           | Method | Description                        |
 |--------------------|--------|------------------------------------|
-| `/chat`            | POST   | Ask questions (RAG-powered)        |
+| `/chat/`           | POST   | Ask questions (RAG-powered with SSE streaming) |
 
 ### File Management
 | Endpoint           | Method | Description                        |
@@ -175,9 +175,9 @@ OPENAI_API_KEY=your_openai_api_key_here
 ## Project Structure
 
 ```
-automatic-octo-computing-machine/
+automatic-tribble/
 ├── api/                            # FastAPI routes and middleware
-│   └── routes/                     # API endpoints (chat, files, health)
+│   └── routes/                     # API endpoints (chat, files, health, cleanup, models)
 ├── core/                           # Core functionality modules (domain-organized)
 │   ├── ai_services/                # AI and ML services
 │   │   ├── llm/                    # Language model integration
@@ -196,13 +196,9 @@ automatic-octo-computing-machine/
 │   │   └── metadata_stores/        # Document metadata
 │   └── infrastructure/             # System infrastructure
 │       └── caching/                # Performance caching
-├── config/                         # Configuration management (domain-organized)
-│   ├── settings.py                 # Centralized configuration
-│   ├── llm/                        # AI services config
-│   ├── document_processing/        # Document processing config
-│   ├── file/                       # File handling config
-│   ├── rag/                        # RAG config
-│   └── server/                     # Server config
+├── config/                         # Centralized configuration management
+│   ├── __init__.py                 # Configuration exports
+│   └── settings.py                 # Centralized configuration classes (Config.Server, Config.LLM, etc.)
 ├── services/                       # Business logic layer
 ├── utils/                          # Shared utilities (domain-organized)
 │   ├── file_operations/            # File management utilities
@@ -260,7 +256,7 @@ See `.env.example` for a complete list of available configuration options.
 
 ### System Dependencies (for local installation)
 - **Windows**: Visual Studio Build Tools (for compiling packages)
-- **Linux**: `gcc`, `g++`, `libgl1-mesa-glx`, `poppler-utils`
+- **Linux**: `gcc`, `g++`, `libgl1`, `poppler-utils`
 - **macOS**: Xcode Command Line Tools
 
 ### OCR
@@ -284,4 +280,4 @@ picks it up with no further configuration.
 
 ---
 
-For advanced configuration, see [CONFIGURATION.md](CONFIGURATION.md).
+For complete configuration options and defaults, see [.env.example](.env.example) and [config/settings.py](config/settings.py).

@@ -140,7 +140,12 @@ class EmbeddingService:
             import os
             p = Path(path)
             if not p.exists():
-                return False
+                npy_path = p.with_suffix(".npy")
+                if npy_path.exists():
+                    p = npy_path
+                else:
+                    return False
+
             # Skip reload if unchanged
             mtime = os.path.getmtime(str(p))
             if (
