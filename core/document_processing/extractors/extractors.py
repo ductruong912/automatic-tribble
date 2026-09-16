@@ -57,10 +57,16 @@ class TXTTextExtractor(BaseFileExtractor):
         self,
         content: bytes,
         filename: Optional[str] = None,
-        chunk_size=1000,
-        overlap=200,
+        chunk_size=None,
+        overlap=None,
     ) -> list:
         try:
+            from config.settings import Config
+
+            if chunk_size is None:
+                chunk_size = Config.File.CHUNK_SIZE()
+            if overlap is None:
+                overlap = Config.File.CHUNK_OVERLAP()
             try:
                 text = content.decode("utf-8")
             except UnicodeDecodeError:

@@ -227,11 +227,11 @@ class DoclingProcessor:
 
     def _chunk_markdown_by_headings(self, markdown_text: str) -> List[str]:
         """
-        Split markdown by headings only - no size limits, no fallback chunking.
+        Split markdown by headings, then apply the configured size limit.
         - Recognizes headings starting with '#' (ATX-style) at any level.
         - Each heading and its content becomes one chunk.
-        - No size limits - keeps content together under each heading.
-        - If no headings found, returns entire document as one chunk.
+        - Large sections are split at sentence boundaries with configured overlap.
+        - If no headings are found, the document is treated as one section.
         """
         if not markdown_text:
             return []
@@ -256,7 +256,12 @@ class DoclingProcessor:
                 current.append(line)
         push_current()
 
-        # Convert sections to strings, trimming leading/trailing blank lines
+        # Convert sections to strings and split oversized sections without cutting
+        # through the configured chunk boundary.
+        from utils.text_processing.text_utils import TextUtils
+
+        chunk_size = Config.File.CHUNK_SIZE()
+        chunk_overlap = Config.File.CHUNK_OVERLAP()
         chunks: List[str] = []
         for block in sections:
             # Trim
@@ -266,13 +271,28 @@ class DoclingProcessor:
                 block.pop()
             chunk = "\n".join(block).strip()
             if chunk:
-                chunks.append(chunk)
+                chunks.extend(
+                    TextUtils.chunk_text(
+                        chunk,
+                        chunk_size=chunk_size,
+                        overlap=chunk_overlap,
+                    )
+                )
 
-        # If no headings found, return the entire document as one chunk
+        # If no headings were found, return the document as one configured section.
         if not chunks:
-            chunks = [markdown_text.strip()]
+            chunks = TextUtils.chunk_text(
+                markdown_text.strip(),
+                chunk_size=chunk_size,
+                overlap=chunk_overlap,
+            )
 
-        logger.info(f"Created {len(chunks)} chunks based on headings only (no size limits)")
+        logger.info(
+            "Created %d chunks from headings with size=%d and overlap=%d",
+            len(chunks),
+            chunk_size,
+            chunk_overlap,
+        )
         return chunks
 
     def _chunk_by_sentences(self, text: str) -> List[str]:

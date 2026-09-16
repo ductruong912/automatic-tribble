@@ -74,10 +74,7 @@ def _build_context(search_results: List[Dict[str, Any]], max_length: int) -> str
         block = f"[Chunk {result['index']}]\n{result['document']}\n"
         cost = len(block) + (1 if parts else 0)  # 1 for the joining newline
         if used + cost > max_length:
-            if parts:
-                continue
-            block = block[:max_length]  # Top chunk alone exceeds the budget
-            cost = len(block)
+            continue
         parts.append(block)
         used += cost
 

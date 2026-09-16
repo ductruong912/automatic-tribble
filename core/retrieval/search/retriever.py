@@ -67,6 +67,7 @@ class ContextRetriever:
         self._bm25_instance = None
         self._tokenized_docs = None
         self._query_cache = {}
+        self._query_preprocessing_cache = {}
 
     def _ensure_numpy(self, embedding) -> np.ndarray:
         """Convert various embedding formats to numpy arrays for consistent processing."""
@@ -86,10 +87,10 @@ class ContextRetriever:
             return self._query_preprocessing_cache[text]
 
         # Lowercase, remove Vietnamese accents, strip punctuation/symbols
-        text = TextUtils.strip_vietnamese_accents(text.lower())
-        text = re.sub(r"[^\w\s]", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        tokens = text.split()
+        normalized_text = TextUtils.strip_vietnamese_accents(text.lower())
+        normalized_text = re.sub(r"[^\w\s]", " ", normalized_text)
+        normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
+        tokens = normalized_text.split()
         
         # Cache the result
         self._query_preprocessing_cache[text] = tokens

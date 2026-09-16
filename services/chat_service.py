@@ -7,6 +7,7 @@ import numpy as np
 
 # Local imports
 from core.ai_services import ChatbotService
+from core.ai_services.llm.chatbot import _build_context
 from core.storage.vector_stores import VectorStore
 from config.settings import Config
 from models.responses import ErrorResponse, BaseResponse, StatusEnum
@@ -210,17 +211,12 @@ class ChatService:
                     search_time = time.time() - search_start_time
                     logger.info(f"⏱️ RAG search time: {search_time:.3f}s")
                     
-                    # Build context from search results (same as test)
-                    context_chunks = []
-                    for result in search_results:
-                        context_chunks.append(f"[Chunk {result['index']}]\n{result['document']}\n")
-                    context = "\n".join(context_chunks)
-                    
-                    # Truncate context if too long (same as test)
-                    max_context_length = Config.LLM.MAX_CONTEXT_LENGTH()
-                    if len(context) > max_context_length:
-                        context = context[:max_context_length]
-                        logger.debug(f" Context truncated to {max_context_length} characters")
+                    # Keep whole retrieved chunks; oversized chunks are skipped so the
+                    # context budget never cuts a chunk in the middle.
+                    context = _build_context(
+                        search_results,
+                        Config.LLM.MAX_CONTEXT_LENGTH(),
+                    )
                         
                 except Exception as e:
                     logger.warning(f" RAG search failed: {e}")
