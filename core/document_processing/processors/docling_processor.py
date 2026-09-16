@@ -14,11 +14,16 @@ import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+# System fixes: Ensure HuggingFace Hub Windows compatibility shim is active before docling loads
+from utils.system import setup_huggingface_hub
+setup_huggingface_hub()
+
 # Third-party imports
 try:
     from docling.document_converter import DocumentConverter
 except Exception as _e:  # defer hard failure to runtime path
     DocumentConverter = None  # type: ignore
+
 
 # Local imports
 from models.metadata import MetadataBuilder, ProcessingMethod, SourceType, ProcessingStatus

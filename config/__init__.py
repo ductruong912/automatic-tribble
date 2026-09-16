@@ -14,8 +14,6 @@ LLMConfig = Config.LLM
 ConfidenceConfig = Config.Confidence
 ChatConfig = Config.Chat
 DoclingConfig = Config.OCR  # OCR config for document processing
-PreprocessingConfigManager = Config.OCR
-PreprocessingSettings = Config.OCR
 FileConfig = Config.File
 RAGConfig = Config.RAG
 VietnamesePreprocessingConfig = Config.RAG
@@ -30,12 +28,10 @@ __all__ = [
     "ConfidenceConfig", 
     "ChatConfig",
     "DoclingConfig",
-    "PreprocessingConfigManager",
-    "PreprocessingSettings",
     "FileConfig",
     "RAGConfig",
     "VietnamesePreprocessingConfig",
     "ServerConfig",
     "LoggingConfig",
     "HealthConfig",
-]
+]

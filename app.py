@@ -14,6 +14,9 @@ from utils.file_operations import cleanup_data_folders
 
 load_dotenv()
 
+from utils.system import setup_huggingface_hub
+setup_huggingface_hub()
+
 # Bot name for the browser tab and the header
 APP_TITLE = os.getenv("APP_TITLE", "ChatBot")
 

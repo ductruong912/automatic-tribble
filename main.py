@@ -15,12 +15,14 @@ from dotenv import load_dotenv
 # Load environment variables first, before importing any config classes
 load_dotenv()
 
-# Setup Windows-specific asyncio fixes before any other imports
+# Setup Windows-specific asyncio and HuggingFace fixes before any other imports
 from utils.system import setup_windows_asyncio, setup_asyncio_logging
 from utils.system import configure_uvicorn_for_windows, get_uvicorn_config, get_uvicorn_ssl_config
+from utils.system import setup_huggingface_hub
 setup_windows_asyncio()
 setup_asyncio_logging()
 configure_uvicorn_for_windows()
+setup_huggingface_hub()
 
 # Local imports - Now import config classes after .env is loaded
 from api.routes import router

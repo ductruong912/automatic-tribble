@@ -120,7 +120,13 @@ OPENAI_API_KEY=your_openai_api_key_here
 
 **Note**: The `.env.example` file contains all available configuration options with their default values. Copy it to `.env` and customize as needed.
 
+> **Lưu ý cho người dùng Windows (HuggingFace Hub & Symlinks):**
+> - Trên Windows, `huggingface_hub` mặc định dùng symlink khi tải model (Docling, SentenceTransformers). Nếu không bật Windows Developer Mode, tạo symlink sẽ gặp lỗi `[WinError 1314]`.
+> - Ứng dụng đã tích hợp sẵn runtime shim trong `utils.system.hf_config` để tự động chuyển sang chế độ copy file an toàn (`HF_HUB_DISABLE_SYMLINKS=1`).
+> - Nếu gặp lỗi cache tải dở dang từ trước, hãy chạy: `python scripts/cleanup.py --hf-cache` để dọn cache hỏng và tải lại sạch sẽ.
+
 **4. Access the Application**
+
 
 - **FastAPI Server**: http://localhost:8500
 - **API Documentation**: http://localhost:8500/docs
