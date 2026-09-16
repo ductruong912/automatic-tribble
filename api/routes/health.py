@@ -4,6 +4,7 @@ Health check, performance and cache endpoints for monitoring and diagnostics.
 
 # Standard library imports
 import time
+import logging
 
 # Third-party imports
 from fastapi import APIRouter, Depends
@@ -14,6 +15,8 @@ from utils.performance import get_performance_monitor
 from api.dependencies import get_chat_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
 
 # Track server start time for uptime calculation
 _start_time = time.time()
@@ -55,9 +58,10 @@ async def performance_metrics():
             "timestamp": time.time()
         }
     except Exception as e:
+        logger.error(f"Error retrieving performance metrics: {e}", exc_info=True)
         return {
             "status": "error",
-            "error": str(e),
+            "error": "Failed to retrieve performance metrics.",
             "timestamp": time.time()
         }
 
@@ -76,8 +80,10 @@ async def cache_statistics(chat_service=Depends(get_chat_service)):
             "timestamp": time.time()
         }
     except Exception as e:
+        logger.error(f"Error retrieving cache statistics: {e}", exc_info=True)
         return {
             "status": "error",
-            "error": str(e),
+            "error": "Failed to retrieve cache statistics.",
             "timestamp": time.time()
         }
+

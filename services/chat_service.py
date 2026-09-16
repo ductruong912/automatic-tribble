@@ -194,7 +194,7 @@ class ChatService:
             return status_info
 
         except Exception as e:
-            logger.error(f" Error getting knowledge base status: {str(e)}")
+            logger.error(f" Error getting knowledge base status: {str(e)}", exc_info=True)
             return {
                 "available": False,
                 "document_count": 0,
@@ -203,7 +203,7 @@ class ChatService:
                 "status": "error",
                 "health": "unhealthy",
                 "last_updated": datetime.now().isoformat(),
-                "error": str(e),
+                "error": "Failed to retrieve knowledge base status.",
             }
 
     def get_comprehensive_service_status(self) -> Dict[str, Any]:
@@ -259,12 +259,12 @@ class ChatService:
             }
 
         except Exception as e:
-            logger.error(f" Error getting comprehensive service status: {e}")
+            logger.error(f" Error getting comprehensive service status: {e}", exc_info=True)
             return {
                 "service_name": "ChatService",
                 "overall_health": "error",
                 "service_available": False,
-                "error": str(e),
+                "error": "Failed to retrieve service status.",
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -304,10 +304,10 @@ class ChatService:
                 "timestamp": time.time()
             }
         except Exception as e:
-            logger.error("Failed to clear cache: %s", e)
+            logger.error("Failed to clear cache: %s", e, exc_info=True)
             return {
                 "message": "Failed to clear cache",
-                "error": str(e),
+                "error": "Failed to clear cache due to an internal error.",
                 "timestamp": time.time()
             }
 
@@ -336,9 +336,9 @@ class ChatService:
                 "timestamp": time.time()
             }
         except Exception as e:
-            logger.error("Failed to get cache stats: %s", e)
+            logger.error("Failed to get cache stats: %s", e, exc_info=True)
             return {
-                "error": str(e),
+                "error": "Failed to retrieve cache stats.",
                 "timestamp": time.time()
             }
 

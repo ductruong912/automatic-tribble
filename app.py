@@ -11,8 +11,11 @@ import urllib3
 import base64
 from dotenv import load_dotenv
 from utils.file_operations import cleanup_data_folders
+from utils.text_processing import escape_text, sanitize_html
+
 
 load_dotenv()
+
 
 from utils.system import setup_huggingface_hub
 setup_huggingface_hub()
@@ -919,17 +922,18 @@ class ChatApp:
         # Render chat history
         for msg in st.session_state.chat_history:
                 with st.chat_message(msg["role"]):
-                    # Wrap content với class dựa trên role
+                    # Wrap content với class dựa trên role (escape user input, sanitize assistant HTML)
                     bubble_class = "user" if msg["role"] == "user" else "assistant"
-                    st.markdown(f'<div class="bubble {bubble_class}">{msg["content"]}</div>', unsafe_allow_html=True)
+                    content = escape_text(msg["content"]) if msg["role"] == "user" else sanitize_html(msg["content"])
+                    st.markdown(f'<div class="bubble {bubble_class}">{content}</div>', unsafe_allow_html=True)
 
         # Chat input (streams from backend /chat)
         user_input = st.chat_input("Nhập câu hỏi của bạn")
         if user_input:
             st.session_state.chat_history.append({"role": "user", "content": user_input})
             with st.chat_message("user"):
-                # Wrap user input
-                st.markdown(f'<div class="bubble user">{user_input}</div>', unsafe_allow_html=True)
+                # Wrap user input safely escaped
+                st.markdown(f'<div class="bubble user">{escape_text(user_input)}</div>', unsafe_allow_html=True)
 
             with st.chat_message("assistant"):
                 # Show typing indicator first
@@ -950,8 +954,9 @@ class ChatApp:
                         now = time.time()
                         # Flush frequently for smooth ChatGPT-like typing effect
                         if value.endswith((" ", "\n", ".", ",", ":", ";", "!", "?")) or (now - last_flush) > 0.05:
-                            # Wrap streaming content with typing cursor
-                            placeholder.markdown(f'<div class="bubble assistant typing-cursor">{format_markdown_response_streaming(accumulated)}</div>', unsafe_allow_html=True)
+                            # Wrap streaming content with typing cursor (sanitized)
+                            safe_stream = sanitize_html(format_markdown_response_streaming(accumulated))
+                            placeholder.markdown(f'<div class="bubble assistant typing-cursor">{safe_stream}</div>', unsafe_allow_html=True)
                             last_flush = now
                         # Small delay for natural typing rhythm
                         time.sleep(0.02)
@@ -965,11 +970,13 @@ class ChatApp:
                     placeholder.empty()
                     st.error(f"Không nhận được câu trả lời: {stream_error}")
                 else:
-                    # After full completion, apply full formatter and update the UI immediately
+                    # After full completion, apply full formatter, sanitize HTML, and update the UI immediately
                     final_text = format_markdown_response(accumulated)
+                    safe_final_text = sanitize_html(final_text)
                     # Wrap final content without typing cursor
-                    placeholder.markdown(f'<div class="bubble assistant">{final_text}</div>', unsafe_allow_html=True)
-                    st.session_state.chat_history.append({"role": "assistant", "content": final_text})
+                    placeholder.markdown(f'<div class="bubble assistant">{safe_final_text}</div>', unsafe_allow_html=True)
+                    st.session_state.chat_history.append({"role": "assistant", "content": safe_final_text})
+
 
 
 if __name__ == "__main__":

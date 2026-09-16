@@ -12,14 +12,14 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 
 # Local imports
 from config.settings import Config
-from api.dependencies import get_vector_store
+from api.dependencies import get_vector_store, verify_admin_key
 
 from core.storage.vector_stores import VectorStore
 # File watching functionality removed
 from models.responses import VectorRebuildResponse, StatusEnum
 # RAGConfig is now available through Config.RAG
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_admin_key)])
 logger = logging.getLogger(__name__)
 
 
@@ -81,10 +81,10 @@ async def rebuild_vectors(
         )
         
     except Exception as e:
-        logger.error(f" Error during vector store rebuild: {e}")
+        logger.error(f" Error during vector store rebuild: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to rebuild vector store: {str(e)}"
+            detail="Failed to rebuild vector store due to an internal server error."
         )
 
 
@@ -119,5 +119,9 @@ async def update_query_adapter(payload: Dict[str, Any] = Body(default={})):  # s
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f" Error updating query adapter: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f" Error updating query adapter: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update query adapter due to an internal server error."
+        )
+

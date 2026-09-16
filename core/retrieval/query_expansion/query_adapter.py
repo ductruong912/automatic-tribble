@@ -45,6 +45,11 @@ def save_query_adapter(adapter: np.ndarray, path: str) -> None:
     logger.info(f" Saved query adapter to {path}")
 
 
+def load_query_adapter(path: str) -> np.ndarray:
+    """Load query adapter numpy matrix from disk."""
+    return np.load(path)
+
+
 def build_from_evals(
     queries: List[str],
     positives: List[str],

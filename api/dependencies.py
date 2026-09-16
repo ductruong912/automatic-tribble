@@ -9,15 +9,62 @@ every cache, which makes the whole caching layer pointless.
 # Standard library imports
 import logging
 import os
+import secrets
 import threading
+from typing import Optional
+
+# Third-party imports
+from fastapi import HTTPException, Security, status
+from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
 
 # Local imports
+from config.settings import Config
 from services import DocumentService, ChatService, UploadService
 from core.ai_services import ChatbotService
 from core.retrieval import ContextRetriever
 from core.storage.vector_stores import VectorStore
 
 logger = logging.getLogger(__name__)
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def verify_admin_key(
+    api_key: Optional[str] = Security(api_key_header),
+    bearer_auth: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+) -> str:
+    """
+    Verify the X-API-Key header or Bearer token against the configured ADMIN_API_KEY.
+    Constant-time comparison prevents timing attacks.
+    """
+    expected_key = Config.Server.ADMIN_API_KEY().strip()
+    if not expected_key:
+        logger.error(
+            "🚫 Access denied to maintenance endpoint: ADMIN_API_KEY is not configured on the server"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Maintenance endpoints are disabled: ADMIN_API_KEY is not configured on server",
+        )
+
+    token = None
+    if api_key:
+        token = api_key.strip()
+    elif bearer_auth and bearer_auth.credentials:
+        token = bearer_auth.credentials.strip()
+
+    if not token or not secrets.compare_digest(token, expected_key):
+        logger.warning(
+            "🚫 Unauthorized access attempt to maintenance endpoint: Invalid or missing API key"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key (provide X-API-Key header or Bearer token)",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+    return token
 
 # Reentrant: get_upload_service() asks for the document service while holding it
 _services_lock = threading.RLock()

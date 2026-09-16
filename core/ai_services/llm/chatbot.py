@@ -373,9 +373,13 @@ class ChatbotService:
                 error_response = self._create_error_response(query, "The AI service is currently busy. Please try again in a moment.")
                 return error_response
             except Exception as e:
-                logger.error(f" OpenAI API error: {e}")
-                error_response = self._create_error_response(query, f"AI service error: {str(e)}")
+                logger.error(f" OpenAI API error: {e}", exc_info=True)
+                error_response = self._create_error_response(
+                    query,
+                    "An error occurred while processing your request with the AI service. Please try again later."
+                )
                 return error_response
+
 
             content = response.choices[0].message.content
             response_text = content.strip() if content else ""
@@ -417,8 +421,8 @@ class ChatbotService:
             )
 
         except Exception as e:
-            logger.error(f" Error generating response: {e}")
-            return self._create_error_response(query, f"An error occurred while generating the response: {str(e)}")
+            logger.error(f" Error generating response: {e}", exc_info=True)
+            return self._create_error_response(query, "An error occurred while generating the response. Please try again later.")
 
     def get_response_with_history_and_context(self, query: str, context: str, search_results: List[Dict[str, Any]] = None, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """
@@ -546,9 +550,9 @@ class ChatbotService:
             }
 
         except Exception as e:
-            logger.error(f" Error generating response: {e}")
+            logger.error(f" Error generating response: {e}", exc_info=True)
             return {
-                "response": f"An error occurred while generating the response: {str(e)}",
+                "response": "An error occurred while generating the response. Please try again later.",
                 "confidence": 0.0,
                 "confidence_level": "Low",
                 "confidence_details": {},

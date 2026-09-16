@@ -167,12 +167,39 @@ class ServerConfig:
 
     @staticmethod
     def CORS_ORIGINS():
-        origins = os.getenv("CORS_ORIGINS", "*")
-        return origins.split(",") if origins != "*" else ["*"]
+        origins = os.getenv("CORS_ORIGINS", "*").strip()
+        if origins == "*":
+            return ["*"]
+        return [o.strip() for o in origins.split(",") if o.strip()]
 
     @staticmethod
     def CORS_ALLOW_CREDENTIALS():
-        return os.getenv("CORS_ALLOW_CREDENTIALS", "True").lower() == "true"
+        allow_cred = os.getenv("CORS_ALLOW_CREDENTIALS", "False").lower() == "true"
+        # Wildcard origin with credentials enabled violates CORS spec and is rejected by browsers
+        if allow_cred and "*" in ServerConfig.CORS_ORIGINS():
+            return False
+        return allow_cred
+
+    @staticmethod
+    def ADMIN_API_KEY():
+        """API key required for sensitive maintenance endpoints (e.g. /cleanup/*)."""
+        return os.getenv("ADMIN_API_KEY", "")
+
+    @staticmethod
+    def RATE_LIMIT_ENABLED():
+        return os.getenv("ENABLE_RATE_LIMITING", "True").lower() == "true"
+
+    @staticmethod
+    def RATE_LIMIT_REQUESTS():
+        return int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
+
+    @staticmethod
+    def RATE_LIMIT_WINDOW():
+        return int(os.getenv("RATE_LIMIT_WINDOW", "60"))
+
+    @staticmethod
+    def RATE_LIMIT_MAX_CONCURRENT():
+        return int(os.getenv("RATE_LIMIT_MAX_CONCURRENT", "50"))
 
 
 class RAGConfig:
@@ -208,7 +235,8 @@ class RAGConfig:
 
     @staticmethod
     def RERANKER_MODEL():
-        return os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
+        return os.getenv("RERANKER_MODEL", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+
 
     @staticmethod
     def RERANKER_CANDIDATES():

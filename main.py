@@ -160,7 +160,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Add CORS middleware with configuration for cross-origin requests
+# Setup security, caching, rate limiting, logging, and error handling middlewares
+from api.middleware import StreamingSafeGZipMiddleware, setup_middleware
+
+setup_middleware(
+    app,
+    enable_rate_limiting=Config.Server.RATE_LIMIT_ENABLED(),
+    enable_request_logging=True,
+    max_requests=Config.Server.RATE_LIMIT_REQUESTS(),
+    window_seconds=Config.Server.RATE_LIMIT_WINDOW(),
+    max_concurrent=Config.Server.RATE_LIMIT_MAX_CONCURRENT(),
+)
+
+# Add compression middleware for faster responses; the SSE chat stream is left uncompressed
+app.add_middleware(StreamingSafeGZipMiddleware, minimum_size=1000, exclude_paths=("/chat",))
+
+# Add CORS middleware outermost so cross-origin requests and errors receive CORS headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=Config.Server.CORS_ORIGINS(),
@@ -168,10 +183,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Add compression middleware for faster responses; the SSE chat stream is left uncompressed
-from api.middleware import StreamingSafeGZipMiddleware
-app.add_middleware(StreamingSafeGZipMiddleware, minimum_size=1000, exclude_paths=("/chat",))
 
 # Include API routes from the router module
 app.include_router(router)

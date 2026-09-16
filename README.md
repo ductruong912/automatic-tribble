@@ -236,7 +236,8 @@ The application uses environment variables for configuration. Key variables incl
 - `HOST`: Server host (default: 0.0.0.0)
 - `PORT`: Server port (default: 8500)
 - `EMBEDDING_MODEL`: Embedding model (default: paraphrase-multilingual-MiniLM-L12-v2)
-- `RERANKER_MODEL`: Reranker model (default: cross-encoder/ms-marco-MiniLM-L6-v2)
+- `RERANKER_MODEL`: Reranker model (default: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1)
+
 - `MAX_FILE_SIZE`: Maximum file size in bytes (default: 52428800)
 - `CHUNK_SIZE`: Document chunk size (default: 1000)
 - `SIMILARITY_THRESHOLD`: Search similarity threshold (default: 0.5)

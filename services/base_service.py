@@ -80,10 +80,11 @@ class BaseProcessingService(ABC):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Multiple {item_type} processing error: {str(e)}")
+            logger.error(f"Multiple {item_type} processing error: {str(e)}", exc_info=True)
             raise HTTPException(
-                status_code=500, detail=f"Error processing {item_type}: {str(e)}"
+                status_code=500, detail=f"Failed to process {item_type} due to an internal server error."
             )
+
 
     @abstractmethod
     async def _validate_and_prepare_items(self, items: List[Any]) -> List[Any]:
