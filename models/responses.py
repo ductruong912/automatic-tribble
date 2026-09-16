@@ -87,30 +87,6 @@ class ChatResponse(BaseResponse):
         }
 
 
-class FileUploadResponse(BaseResponse):
-    """File upload response model with processing results and metadata."""
-
-    filename: str = Field(..., description="Uploaded filename")
-    file_size: int = Field(..., description="File size in bytes")
-    document_count: int = Field(..., description="Number of documents extracted")
-    source_id: str = Field(..., description="Generated source ID")
-    metadata: Dict[str, Any] = Field(..., description="File metadata")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "status": "success",
-                "message": "File processed successfully",
-                "filename": "document.pdf",
-                "file_size": 1024000,
-                "document_count": 15,
-                "source_id": "uuid-123",
-                "metadata": {"file_type": "pdf"},
-                "timestamp": "2024-01-01T12:00:00Z",
-            }
-        }
-
-
 class FileProcessResult(BaseModel):
     """Individual file processing result for batch upload responses."""
 
@@ -188,21 +164,6 @@ class MultipleFileUploadResponse(BaseResponse):
         }
 
 
-class Config:
-        json_schema_extra = {
-            "example": {
-                "status": "success",
-                "message": "URL processed successfully",
-                "url": "https://example.com",
-                "document_count": 5,
-                "source_id": "url_example_com_20240101_120000",
-                "metadata": {"content_type": "webpage", "language": "en"},
-                "processing_info": {"processing_time": "2.5s", "method": "docling"},
-                "timestamp": "2024-01-01T12:00:00Z",
-            }
-        }
-
-
 class ErrorResponse(BaseResponse):
     """Error response model for standardized error handling across the API."""
 
@@ -267,17 +228,4 @@ class ChatRequest(BaseModel):
                     {"role": "assistant", "content": "Hi! How can I help you?"}
                 ]
             }
-        }
-
-
-class QueryRequest(BaseModel):
-    """Simple query request model for query-only mode (temporarily without history)."""
-
-    query: str = Field(..., description="User query", min_length=1, max_length=2000)
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "query": "Hi?"
-            }
-        }
+        }

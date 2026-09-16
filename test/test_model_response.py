@@ -28,9 +28,10 @@ load_dotenv()
 logging.basicConfig(level=logging.WARNING)  # Reduce noise
 
 # Import project modules
+from config.settings import Config
 from core.retrieval.search.retriever import ContextRetriever
 from core.storage.vector_stores.vector_store_optimized import OptimizedVectorStore
-from core.ai_services.llm.chatbot import ChatbotService
+from core.ai_services.llm.chatbot import ChatbotService, _build_context
 
 
 class ModelResponseTester:
@@ -78,11 +79,21 @@ class ModelResponseTester:
         start_time = time.time()
         
         try:
-            # Get response from chatbot service
-            response = self.chatbot_service.get_response(
+            # Retrieve context using hybrid search
+            search_results = self.retriever.hybrid_search(
                 query=query,
                 embeddings=embeddings,
-                documents=documents
+                documents=documents,
+                k=Config.RAG.RETRIEVAL_TOP_K(),
+                semantic_weight=Config.RAG.SEMANTIC_WEIGHT()
+            )
+            context = _build_context(search_results, Config.LLM.MAX_CONTEXT_LENGTH())
+
+            # Get response from chatbot service
+            response = self.chatbot_service.get_response_with_context(
+                query=query,
+                context=context,
+                search_results=search_results
             )
             
             processing_time = time.time() - start_time

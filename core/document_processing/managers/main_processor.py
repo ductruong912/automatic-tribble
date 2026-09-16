@@ -27,38 +27,20 @@ class MainDocumentProcessor:
     # Formats Docling cannot convert; handled by our own processors
     NON_DOCLING_EXTENSIONS = {'.txt', '.csv', '.xlsx'}
 
-    def __init__(
-        self,
-        file_manager=None,
-        enable_ocr: bool = None,  # Deprecated - OCR is now automatic for PDFs
-        llm_client=None,
-        llm_model: str = None,
-        preprocessing_config: str = "ocr_optimized",
-    ):
+    def __init__(self, file_manager=None):
         """
         Initialize main processor with file manager and Docling processor.
-        - PDFs: Automatically use OCR (like the test file)
+        - PDFs: Automatically use OCR
         - Other formats: Use normal Docling extraction
         
         Args:
             file_manager: File manager for handling file operations
-            enable_ocr: Deprecated - OCR is now automatic for PDFs
-            llm_client: OpenAI client for enhanced processing
-            llm_model: LLM model to use for enhanced processing
-            preprocessing_config: Preprocessing configuration name ("ocr_optimized", "fast", "high_quality", "default")
         """
         self.file_manager = file_manager if file_manager is not None else FileManager()
-        
-        # Initialize Docling processor with automatic OCR for PDFs and preprocessing
-        self.docling_processor = DoclingProcessor(
-            enable_ocr=False,  # OCR is now automatic based on file type
-            llm_client=llm_client,
-            llm_model=llm_model,
-            preprocessing_config=preprocessing_config
-        )
+        self.docling_processor = DoclingProcessor()
         
         logger = __import__('logging').getLogger(__name__)
-        logger.info(f"MainDocumentProcessor initialized with automatic OCR for PDFs, preprocessing config: {preprocessing_config}")
+        logger.info("MainDocumentProcessor initialized with automatic OCR for PDFs")
 
     async def process_file(self, file_content: bytes, filename: str) -> Dict[str, Any]:
         """
@@ -193,6 +175,3 @@ class MainDocumentProcessor:
         """Check if a file is supported (alias for is_format_supported for compatibility)."""
         return self.is_format_supported(filename)
 
-    def get_ocr_status(self) -> bool:
-        """Get current OCR fallback status."""
-        return getattr(self.docling_processor, 'enable_ocr', False)

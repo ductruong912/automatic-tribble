@@ -12,7 +12,6 @@ from typing import List, Dict, Any, Tuple, Optional
 
 # Third-party imports
 import numpy as np
-import faiss
 
 # Local imports
 from config.settings import Config
@@ -265,71 +264,3 @@ class VectorStore:
         """
         return self.document_metadata
 
-
-class FaissVectorStore(VectorStore):
-    """
-    FAISS-based vector store for high-performance similarity search.
-    Implements the same interface as VectorStore for drop-in replacement.
-    """
-
-    def __init__(self, vector_store_path: Optional[str] = None):
-        super().__init__(vector_store_path)
-        self.index = None
-        self.id_to_doc = {}
-        self.id_to_metadata = {}
-        self.next_id = 0
-        self.faiss_index_path = (
-            vector_store_path or Config.File.VECTOR_STORE_PATH
-        ) + ".faiss"
-        self.load_faiss_index()
-
-    def load_faiss_index(self):
-        if os.path.exists(self.faiss_index_path):
-            self.index = faiss.read_index(self.faiss_index_path)
-            # TODO: Load id_to_doc and id_to_metadata from disk (implement as needed)
-        else:
-            self.index = None
-
-    def save_faiss_index(self):
-        if self.index is not None:
-            faiss.write_index(self.index, self.faiss_index_path)
-            # TODO: Save id_to_doc and id_to_metadata to disk (implement as needed)
-
-    def add_documents(
-        self,
-        documents: List[str],
-        source_metadata: Dict[str, Any],
-        rebuild_immediately: bool = True,
-    ) -> bool:
-        try:
-            embeddings = self.create_embeddings(documents)
-            if self.index is None:
-                dim = embeddings.shape[1]
-                self.index = faiss.IndexFlatL2(dim)
-            self.index.add(embeddings)
-            for i, doc in enumerate(documents):
-                self.id_to_doc[self.next_id] = doc
-                self.id_to_metadata[self.next_id] = source_metadata
-                self.next_id += 1
-            self.save_faiss_index()
-            return True
-        except Exception as e:
-            print(f" Error adding documents to FAISS: {e}")
-            return False
-
-    def search(self, query_embedding: np.ndarray, top_k: int = 5):
-        if self.index is None:
-            return []
-        # Reshape query embedding to 2D array for FAISS
-        query_embedding_2d = query_embedding.reshape(1, -1)
-        D, I = self.index.search(query_embedding_2d, top_k)
-        results = []
-        for idx in I[0]:
-            if idx in self.id_to_doc:
-                results.append(
-                    {
-                        "document": self.id_to_doc[idx],
-                        "metadata": self.id_to_metadata.get(idx, {}),
-                    }
-                )
-        return results

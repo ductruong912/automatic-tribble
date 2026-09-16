@@ -38,22 +38,12 @@ class DoclingProcessor:
     Produces heading-based chunks from the exported markdown.
     """
 
-    def __init__(self, enable_ocr: bool = False, llm_client=None, llm_model: str = None, 
-                 preprocessing_config: str = "ocr_optimized"):
+    def __init__(self):
         """
         Initialize Docling processor with automatic OCR for PDFs and normal extraction for other formats.
-        - PDFs: Always use OCR (like the test file)
+        - PDFs: Always use OCR
         - Other formats: Use normal Docling extraction
-        
-        Args:
-            enable_ocr: Deprecated - OCR is now automatic for PDFs
-            llm_client: OpenAI client for enhanced processing
-            llm_model: LLM model to use for enhanced processing
-            preprocessing_config: Preprocessing configuration name ("ocr_optimized", "fast", "high_quality", "default")
         """
-        self.llm_client = llm_client
-        self.llm_model = llm_model
-        
         # Converter reuse for memory efficiency
         self._normal_converter = None
         self._converter_lock = asyncio.Lock()
@@ -298,45 +288,6 @@ class DoclingProcessor:
             chunk_size,
             chunk_overlap,
         )
-        return chunks
-
-    def _chunk_by_sentences(self, text: str) -> List[str]:
-        """DEPRECATED: No longer used - chunking is now heading-only."""
-        """
-        Split text by sentences while preserving text structure.
-        """
-        if not text or len(text) < 200:
-            return [text] if text.strip() else []
-        
-        # Sentence endings
-        sentence_endings = r'[.!?]+(?:\s|$)'
-        sentences = re.split(sentence_endings, text)
-        
-        chunks = []
-        current_chunk = ""
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-                
-            # Add period if sentence doesn't end with punctuation
-            if sentence and not re.search(r'[.!?]$', sentence):
-                sentence += "."
-            
-            if current_chunk and len(current_chunk) + len(sentence) > 1000:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                current_chunk = sentence
-            else:
-                if current_chunk:
-                    current_chunk += " " + sentence
-                else:
-                    current_chunk = sentence
-        
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-
         return chunks
 
     def get_supported_formats(self) -> List[str]:

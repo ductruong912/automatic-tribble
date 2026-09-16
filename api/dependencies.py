@@ -33,8 +33,7 @@ def get_document_service() -> DocumentService:
     if _document_service is None:
         with _services_lock:
             if _document_service is None:
-                preprocessing_config = os.getenv("PREPROCESSING_CONFIG", "ocr_optimized")
-                _document_service = DocumentService(preprocessing_config=preprocessing_config)
+                _document_service = DocumentService()
                 logger.info("DocumentService ready")
     return _document_service
 

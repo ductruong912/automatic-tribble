@@ -31,9 +31,6 @@ class BackgroundTaskManager:
         self.running = True
         logger.info("Background task manager started")
         
-        # Start cache warming task
-        asyncio.create_task(self._cache_warming_loop())
-        
         # Start cleanup task
         asyncio.create_task(self._cleanup_loop())
         
@@ -43,18 +40,8 @@ class BackgroundTaskManager:
         self.executor.shutdown(wait=True)
         logger.info("Background task manager stopped")
         
-    async def _cache_warming_loop(self):
-        """Periodically warm up caches for better performance."""
-        while self.running:
-            try:
-                await asyncio.sleep(300)  # Every 5 minutes
-                if self.running:
-                    await self._warm_caches()
-            except Exception as e:
-                logger.error(f"Error in cache warming loop: {e}")
-                
     async def _cleanup_loop(self):
-        """Periodically clean up memory and caches."""
+        """Periodically clean up memory."""
         while self.running:
             try:
                 await asyncio.sleep(600)  # Every 10 minutes
@@ -63,37 +50,11 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Error in cleanup loop: {e}")
                 
-    async def _warm_caches(self):
-        """Warm up various caches for better performance."""
-        try:
-            logger.debug("Warming up caches...")
-            
-            # Warm up embedding cache with common queries
-            common_queries = [
-                "hello", "help", "what is", "how to", "explain",
-                "xin chào", "giúp đỡ", "là gì", "làm thế nào", "giải thích"
-            ]
-            
-            # This would be implemented based on your specific cache services
-            # For now, just log the warming attempt
-            logger.debug(f"Warmed up caches for {len(common_queries)} common queries")
-            
-        except Exception as e:
-            logger.error(f"Error warming caches: {e}")
-            
     async def _cleanup_memory(self):
-        """Clean up memory and optimize caches."""
+        """Clean up unused memory via garbage collection."""
         try:
-            logger.debug("Cleaning up memory...")
-            
-            # Force garbage collection
             collected = gc.collect()
-            logger.debug(f"Garbage collection freed {collected} objects")
-            
-            # This would be implemented based on your specific cache services
-            # For now, just log the cleanup attempt
-            logger.debug("Memory cleanup completed")
-            
+            logger.debug(f"Memory cleanup completed: freed {collected} objects")
         except Exception as e:
             logger.error(f"Error during memory cleanup: {e}")
             

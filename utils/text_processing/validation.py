@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 import os
 
 # Local imports
-from config.settings import Config
 from .text_utils import TextUtils
 
 # Windows device names, unusable as a file or directory name even with an extension
@@ -22,60 +21,6 @@ RESERVED_WINDOWS_NAMES = {
 
 class ValidationUtils:
     """Utility functions for input validation."""
-
-    @staticmethod
-    def validate_file_size(
-        file_size: int, max_size: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """Validate file size against maximum allowed size."""
-        max_size = max_size or Config.File.MAX_FILE_SIZE
-
-        if file_size > max_size:
-            return {
-                "valid": False,
-                "error": f"File too large. Maximum {max_size / (1024*1024):.1f}MB allowed.",
-            }
-
-        return {"valid": True, "error": None}
-
-    @staticmethod
-    def validate_file_extension(
-        filename: str, allowed_extensions: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
-        """Validate file extension against allowed extensions."""
-        allowed_extensions = allowed_extensions or Config.File.ALLOWED_EXTENSIONS
-
-        if not filename:
-            return {"valid": False, "error": "No filename provided"}
-
-        file_ext = Path(filename).suffix.lower()
-
-        if file_ext not in allowed_extensions:
-            return {
-                "valid": False,
-                "error": f"File type not allowed. Allowed types: {', '.join(allowed_extensions)}",
-            }
-
-        return {"valid": True, "error": None}
-
-    @staticmethod
-    def validate_batch_size(file_count: int, total_size: int) -> Dict[str, Any]:
-        """Validate batch constraints."""
-        # Check file count
-        if file_count > Config.File.MAX_FILES_PER_BATCH:
-            return {
-                "valid": False,
-                "error": f"Too many files. Maximum {Config.File.MAX_FILES_PER_BATCH} files per batch.",
-            }
-
-        # Check total size
-        if total_size > Config.File.MAX_TOTAL_BATCH_SIZE:
-            return {
-                "valid": False,
-                "error": f"Total batch size too large. Maximum {Config.File.MAX_TOTAL_BATCH_SIZE / (1024*1024):.1f}MB allowed.",
-            }
-
-        return {"valid": True, "error": None}
 
     @staticmethod
     def validate_url(url: str) -> Dict[str, Any]:

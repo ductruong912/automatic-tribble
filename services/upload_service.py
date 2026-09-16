@@ -15,7 +15,6 @@ from fastapi import UploadFile, HTTPException
 # Local imports
 from config.settings import Config
 from models.responses import MultipleFileUploadResponse
-from utils.text_processing import ValidationUtils
 from .base_service import BaseProcessingService
 
 logger = logging.getLogger(__name__)

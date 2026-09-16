@@ -28,7 +28,6 @@ setup_huggingface_hub()
 from api.routes import router
 from api.dependencies import init_services, shutdown_services
 from config.settings import Config
-from setting import validate_config
 from core.ai_services.embeddings.embeddings import get_embedding_service
 from core.storage.vector_stores.vector_store_optimized import OptimizedVectorStore
 from utils.performance import start_background_tasks, stop_background_tasks
@@ -225,7 +224,7 @@ def main():
     args = parser.parse_args()
 
     # Validate configuration on startup
-    validate_config()
+    Config.validate()
 
     # Determine workers
     workers = args.workers if args.workers else DEFAULT_WORKERS

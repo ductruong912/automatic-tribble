@@ -230,14 +230,6 @@ def get_embedding_service():
         _embedding_service_instance = EmbeddingService()
     return _embedding_service_instance
 
-def reset_embedding_service():
-    """Reset the global embedding service to force reinitialization."""
-    global _embedding_service_instance
-    if _embedding_service_instance is not None:
-        _embedding_service_instance.reset_embedder()
-    else:
-        _embedding_service_instance = None
-
 
 def get_embedder():
     """Get the global embedder instance for legacy code compatibility."""

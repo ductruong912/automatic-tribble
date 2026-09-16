@@ -76,10 +76,6 @@ class LLMConfig:
         return int(os.getenv("LLM_CACHE_MAX_SIZE", "100"))
 
     @staticmethod
-    def LLM_MAX_WORKERS():
-        return int(os.getenv("LLM_MAX_WORKERS", "5"))
-
-    @staticmethod
     def LLM_HISTORY_LENGTH():
         return int(os.getenv("LLM_HISTORY_LENGTH", "9"))
 
@@ -257,22 +253,6 @@ class RAGConfig:
         return os.getenv("USE_FAISS_INDEX", "False").lower() == "true"
 
 
-class ChatConfig:
-    """Chat functionality configuration."""
-
-    @staticmethod
-    def CHAT_MODE():
-        return os.getenv("CHAT_MODE", "query_only")
-
-    @staticmethod
-    def ENABLE_HISTORY():
-        return ChatConfig.CHAT_MODE().lower() == "with_history"
-
-    @staticmethod
-    def MAX_HISTORY_LENGTH():
-        return int(os.getenv("MAX_HISTORY_LENGTH", "10"))
-
-
 class OCRConfig:
     """OCR and document processing configuration."""
 
@@ -404,7 +384,6 @@ class Config:
     File = FileConfig
     Server = ServerConfig
     RAG = RAGConfig
-    Chat = ChatConfig
     OCR = OCRConfig
     Logging = LoggingConfig
     Confidence = ConfidenceConfig

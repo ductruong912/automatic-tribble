@@ -26,7 +26,7 @@ class DocumentService:
     Uses Docling for basic document conversion.
     """
 
-    def __init__(self, processor=None, file_manager=None, enable_ocr: bool = None, llm_client=None, llm_model: str = None, preprocessing_config: str = "ocr_optimized"):
+    def __init__(self, processor=None, file_manager=None):
         """
         Initialize document service with processing components.
         - PDFs: Automatically use OCR
@@ -35,22 +35,12 @@ class DocumentService:
         Args:
             processor: Main document processor instance
             file_manager: File manager instance
-            enable_ocr: Deprecated - OCR is now automatic for PDFs
-            llm_client: OpenAI client for enhanced processing
-            llm_model: LLM model to use for enhanced processing
-            preprocessing_config: Preprocessing configuration name ("ocr_optimized", "fast", "high_quality", "default")
         """
         self.file_manager = file_manager if file_manager is not None else FileManager()
         self.processor = (
             processor
             if processor is not None
-            else MainDocumentProcessor(
-                file_manager=self.file_manager,
-                enable_ocr=False,  # OCR is now automatic based on file type
-                llm_client=llm_client,
-                llm_model=llm_model,
-                preprocessing_config=preprocessing_config
-            )
+            else MainDocumentProcessor(file_manager=self.file_manager)
         )
         
         # OCR concurrency control - configurable to prevent memory issues
@@ -64,53 +54,31 @@ class DocumentService:
     async def _process_with_ocr_control(self, file_content: bytes, filename: str) -> Dict[str, Any]:
         """
         Process a single file with OCR concurrency control to prevent memory exhaustion.
-        Uses semaphore to limit concurrent OCR operations and aggressive memory management.
+        Uses semaphore to limit concurrent OCR operations.
         """
         async with self._ocr_semaphore:
             logger.info(f"🔒 [DocumentService] Acquired OCR slot for {filename}")
             try:
-                # Clear memory before processing
-                await self._aggressive_memory_cleanup()
-                
-                # Process the file
                 result = await self.processor.process_file(file_content, filename)
-                
-                # Clear memory after OCR processing
-                await self._aggressive_memory_cleanup()
-                
                 logger.info(f"🔓 [DocumentService] Released OCR slot for {filename}")
                 return result
             except Exception as e:
                 logger.error(f" [DocumentService] OCR processing failed for {filename}: {e}")
-                # Clear memory even on failure
-                await self._aggressive_memory_cleanup()
                 raise
+            finally:
+                self._cleanup_memory()
 
-    async def _aggressive_memory_cleanup(self):
-        """Perform aggressive memory cleanup to prevent memory exhaustion."""
+    def _cleanup_memory(self):
+        """Perform lightweight memory cleanup following P1-07."""
         try:
             import gc
-            import torch
-            
-            # Clear Python garbage collection
             gc.collect()
-            
-            # Clear PyTorch GPU cache if available
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            
-            # Force garbage collection multiple times
-            for _ in range(3):
-                gc.collect()
-            
-            # Clear any potential caches in the processor
-            if hasattr(self.processor, 'docling_processor'):
-                self.processor.docling_processor._clear_memory_caches()
-            
-            # Small delay to allow memory to be freed
-            await asyncio.sleep(0.1)
-            
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
         except Exception as e:
             logger.debug(f"Memory cleanup warning: {e}")
 

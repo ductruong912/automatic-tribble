@@ -134,205 +134,6 @@ class ChatService:
             logger.warning(f" Search failed: {e}")
             return []
 
-    async def chat_with_memory(
-        self, query: str, custom_history: Optional[List[Dict[str, str]]] = None
-    ) -> Dict[str, Any]:
-        """
-        Unified chat method: always uses history memory, configurable length.
-        If custom_history is provided, use it; otherwise, use global history.
-        """
-        start_time = time.time()
-        request_id = f"chat_{int(time.time() * 1000)}"
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("Processing chat request %s: %s...", request_id, query[:50])
-        try:
-            # Update request metrics for monitoring
-            self.service_metrics["total_requests"] += 1
-
-            # Validate input query for processing
-            if not query or not query.strip():
-                return self._create_error_response(
-                    query, "Empty query provided", request_id, start_time
-                ).dict()
-
-            # Check chatbot service availability before processing
-            if not self.chatbot_service.api_available:
-                logger.error(" ChatbotService not available")
-                return self._create_error_response(
-                    query,
-                    "Chat service is currently unavailable",
-                    request_id,
-                    start_time,
-                ).dict()
-
-            # Load vector store with caching for performance
-            vector_store_result = self._get_cached_vector_store()
-            if vector_store_result is None:
-                return self._create_error_response(
-                    query,
-                    "Knowledge base is currently unavailable",
-                    request_id,
-                    start_time,
-                ).dict()
-            
-            _, current_embeddings, current_documents = vector_store_result
-            is_cached = False  # Initialize is_cached variable
-
-            # Handle empty knowledge base gracefully with universal prompt
-            if not current_documents:
-                logger.info(
-                    "💬 No documents in knowledge base - using universal prompt"
-                )
-                current_embeddings = np.array([])
-                current_documents = []
-            else:
-                logger.info(
-                    f" Knowledge base loaded: {len(current_documents)} documents"
-                )
-                if current_embeddings is None:
-                    current_embeddings = np.array([])
-                elif isinstance(current_embeddings, list):
-                    current_embeddings = np.array(current_embeddings)
-
-            # Perform RAG search with caching for performance
-            context = ""
-            search_results = []
-            if current_documents and len(current_documents) > 0 and current_embeddings is not None:
-                try:
-                    # Use cached search results for better performance
-                    search_start_time = time.time()
-                    search_results = self._get_cached_search_results(
-                        query=query,
-                        embeddings=current_embeddings,
-                        documents=current_documents,
-                        k=Config.RAG.RETRIEVAL_TOP_K(),
-                        semantic_weight=Config.RAG.SEMANTIC_WEIGHT()
-                    )
-                    search_time = time.time() - search_start_time
-                    logger.info(f"⏱️ RAG search time: {search_time:.3f}s")
-                    
-                    # Keep whole retrieved chunks; oversized chunks are skipped so the
-                    # context budget never cuts a chunk in the middle.
-                    context = _build_context(
-                        search_results,
-                        Config.LLM.MAX_CONTEXT_LENGTH(),
-                    )
-                        
-                except Exception as e:
-                    logger.warning(f" RAG search failed: {e}")
-                    context = ""
-                    search_results = []
-
-            # History comes from the caller only - see __init__
-            history = custom_history[-Config.LLM.LLM_HISTORY_LENGTH():] if custom_history else []
-
-            # Generate response using the same context for both modes
-            try:
-                llm_start_time = time.time()
-                if history and len(history) > 0:
-                    # History mode: use get_response_with_history but with pre-built context
-                    logger.debug(f"🔄 Calling LLM with history (context: {len(context)} chars)")
-                    result = self.chatbot_service.get_response_with_history_and_context(
-                        query=query,
-                        context=context,
-                        search_results=search_results,
-                        history=history,
-                    )
-                else:
-                    # Query-only mode: use get_response_with_context
-                    logger.debug(f"🔄 Calling LLM without history (context: {len(context)} chars)")
-                    result = self.chatbot_service.get_response_with_context(
-                        query=query,
-                        context=context,
-                        search_results=search_results,
-                    )
-                llm_time = time.time() - llm_start_time
-                logger.info(f"⏱️ LLM response time: {llm_time:.3f}s")
-                # Calculate total processing time for performance monitoring
-                processing_time = time.time() - start_time
-                # Update service metrics for health monitoring
-                self.service_metrics["successful_requests"] += 1
-                self._update_average_response_time(processing_time)
-                
-                # Record performance metrics
-                if hasattr(self, '_performance_monitor'):
-                    self._performance_monitor.record_request(processing_time, is_cached)
-                    self._performance_monitor.record_system_metrics()
-                
-                if logger.isEnabledFor(logging.INFO):
-                    logger.info(" Request %s completed successfully in %.2fs", request_id, processing_time)
-                # Extract response and metadata from result for comprehensive response
-                if hasattr(result, 'response'):
-                    # ChatResponse object
-                    response_text = result.response
-                    confidence_score = result.confidence.get("score", 0.0) if result.confidence else 0.0
-                    confidence_level = result.confidence.get("level", "Unknown") if result.confidence else "Unknown"
-                    confidence_details = result.confidence.get("details", {}) if result.confidence else {}
-                    search_results = result.search_metadata if hasattr(result, 'search_metadata') else {}
-                    is_cached = result.search_metadata.get("cached_response", False) if hasattr(result, 'search_metadata') else False
-                else:
-                    # Dictionary format
-                    response_text = result.get("response", "")
-                    confidence_score = result.get("confidence", 0.0)
-                    confidence_level = result.get("confidence_level", "Unknown")
-                    confidence_details = result.get("confidence_details", {})
-                    search_results = result.get("search_results", {})
-                    is_cached = result.get("cached", False)
-                # The turn is not stored server side - the caller owns the conversation
-                return BaseResponse(
-                    status=StatusEnum.SUCCESS,
-                    response=response_text,
-                    query=query,
-                    request_id=request_id,
-                    document_count=len(current_documents),
-                    processing_time=processing_time,
-                    confidence={
-                        "score": confidence_score,
-                        "level": confidence_level,
-                        "details": confidence_details,
-                    },
-                    search_metadata={
-                        "results_count": search_results.get("count", 0),
-                        "top_scores": search_results.get("top_scores", []),
-                        "cached_response": is_cached,
-                    },
-                    error=None,
-                ).dict()
-            except Exception as e:
-                logger.error(" Error in chatbot service for request %s: %s", request_id, e)
-                self.service_metrics["failed_requests"] += 1
-                return self._create_error_response(
-                    query,
-                    f"Error generating response: {str(e)}",
-                    request_id,
-                    start_time,
-                    document_count=len(current_documents),
-                ).dict()
-        finally:
-            pass
-
-    def _create_error_response(
-        self,
-        query: str,
-        error_msg: str,
-        request_id: str,
-        start_time: float,
-        document_count: int = 0,
-    ) -> ErrorResponse:
-        """Create standardized error response using ErrorResponse model."""
-        processing_time = time.time() - start_time
-        return ErrorResponse(
-            status=StatusEnum.ERROR,
-            message=error_msg,
-            error_code="CHAT_ERROR",
-            details={
-                "query": query,
-                "request_id": request_id,
-                "document_count": document_count,
-                "processing_time": processing_time,
-            },
-        )
-
     def _update_average_response_time(self, response_time: float):
         """Update rolling average response time."""
         current_avg = self.service_metrics["average_response_time"]
@@ -354,7 +155,14 @@ class ChatService:
         """
         try:
             logger.debug("Checking knowledge base status...")
-            _, current_embeddings, current_documents = vector_store.load_vector_store()
+            vs = getattr(self.chatbot_service.context_retriever, "vector_store", None)
+            vector_store_result = self._get_cached_vector_store()
+            if vector_store_result is not None:
+                _, current_embeddings, current_documents = vector_store_result
+            elif vs is not None:
+                _, current_embeddings, current_documents = vs.load_vector_store()
+            else:
+                current_embeddings, current_documents = None, None
 
             # Calculate additional metrics
             embedding_dimensions = 0
@@ -365,6 +173,8 @@ class ChatService:
                     else 0
                 )
 
+            vs_path = getattr(vs, "vector_store_path", "data/vector_stores")
+
             status_info = {
                 "available": bool(current_documents),
                 "document_count": len(current_documents) if current_documents else 0,
@@ -374,7 +184,7 @@ class ChatService:
                 "embedding_dimensions": embedding_dimensions,
                 "status": "ready" if current_documents else "empty",
                 "last_updated": datetime.now().isoformat(),
-                "vector_store_path": vector_store.vector_store_path,
+                "vector_store_path": str(vs_path),
                 "health": "healthy" if current_documents else "no_data",
             }
 

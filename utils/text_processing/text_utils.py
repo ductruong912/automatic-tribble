@@ -279,8 +279,7 @@ class TextUtils:
     ) -> list:
         """
         Hybrid chunking: group full sentences into chunks up to chunk_size, with overlap at sentence boundaries.
-        Uses NLTK's sent_tokenize for sentence splitting if available, supporting English and Vietnamese.
-        Falls back to regex if NLTK is unavailable.
+        Uses punctuation-based sentence splitting, supporting English and Vietnamese.
         Args:
             text: Input text
             chunk_size: Max chunk size (characters)
@@ -289,8 +288,6 @@ class TextUtils:
         Returns:
             List of chunked strings
         """
-        import re
-
         if not text or not text.strip():
             return []
         text = text.strip()
@@ -330,29 +327,17 @@ class TextUtils:
         if not sections:
             sections = [text]
         
-        # Now chunk each section using the original logic
+        # Now chunk each section using sentence-based chunking
         all_chunks = []
         for section in sections:
             if len(section) <= chunk_size:
                 all_chunks.append(section)
             else:
-                # Use original sentence-based chunking for large sections
-                try:
-                    import nltk
-                    try:
-                        nltk.data.find("tokenizers/punkt")
-                    except LookupError:
-                        nltk.download("punkt")
-                    from nltk.tokenize import sent_tokenize
-                    
-                    lang_map = {"vi": "vietnamese", "en": "english"}
-                    lang = lang_map.get(language, "vietnamese")
-                    sentences = sent_tokenize(section, language=lang)
-                except Exception:
-                    if language == "vi":
-                        sentences = re.split(r"(?<=[.!?。！？])\s+", section)
-                    else:
-                        sentences = re.split(r"(?<=[.!?])\s+", section)
+                # Sentence-based splitting using regex (offline, fast, no network download)
+                if language == "vi":
+                    sentences = re.split(r"(?<=[.!?。！？])\s+", section)
+                else:
+                    sentences = re.split(r"(?<=[.!?])\s+", section)
                 
                 # Chunk the sentences within this section
                 chunks = []

@@ -14,7 +14,7 @@ from .performance import (
 from .system import (
     setup_windows_asyncio, setup_asyncio_logging,
     configure_uvicorn_for_windows, get_uvicorn_config, get_uvicorn_ssl_config,
-    LogManager, setup_huggingface_hub, check_symlink_support
+    setup_huggingface_hub, check_symlink_support
 )
 
 # Legacy aliases for backward compatibility
@@ -38,6 +38,7 @@ __all__ = [
     # System
     "setup_windows_asyncio", "setup_asyncio_logging",
     "configure_uvicorn_for_windows", "get_uvicorn_config", "get_uvicorn_ssl_config",
-    "LogManager", "setup_huggingface_hub", "check_symlink_support"
+    "setup_huggingface_hub", "check_symlink_support"
 ]
+
 
