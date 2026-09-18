@@ -17,6 +17,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from config.settings import Config
 from .prompts import PromptManager, SystemPrompts
+from .token_budget import TokenBudgetManager
 from ..confidence.confidence import ConfidenceScorer
 from models.responses import ChatResponse, ErrorResponse, BaseResponse, StatusEnum
 
@@ -31,13 +32,13 @@ def _sanitize_history(
     history: Optional[List[Dict[str, str]]]
 ) -> List[Dict[str, str]]:
     """
-    Keep only well-formed user/assistant turns from client history and cap each one.
+    Keep only well-formed user/assistant turns from client history.
     Rebuilds every message so no extra client-supplied key reaches the API.
+    (Length caps and token budgeting are handled by TokenBudgetManager.)
     """
     if not history:
         return []
 
-    max_length = Config.LLM.MAX_HISTORY_MESSAGE_LENGTH()
     clean: List[Dict[str, str]] = []
 
     for msg in history:
@@ -50,39 +51,13 @@ def _sanitize_history(
         role = role.strip().lower()
         if role not in _ALLOWED_HISTORY_ROLES or not content.strip():
             continue
-        clean.append({"role": role, "content": content[:max_length]})
+        clean.append({"role": role, "content": content})
 
     dropped = len(history) - len(clean)
     if dropped:
         logger.warning(f"Dropped {dropped} invalid message(s) from client history")
 
     return clean
-
-
-def _build_context(search_results: List[Dict[str, Any]], max_length: int) -> str:
-    """Pack retrieved chunks into the context whole, highest scoring first."""
-    if not search_results:
-        return ""
-
-    ordered = sorted(
-        search_results, key=lambda r: r.get("combined_score", 0.0), reverse=True
-    )
-
-    parts: List[str] = []
-    used = 0
-    for result in ordered:
-        block = f"[Chunk {result['index']}]\n{result['document']}\n"
-        cost = len(block) + (1 if parts else 0)  # 1 for the joining newline
-        if used + cost > max_length:
-            continue
-        parts.append(block)
-        used += cost
-
-    dropped = len(ordered) - len(parts)
-    if dropped:
-        logger.debug(f"Context budget {max_length} chars: kept {len(parts)}, dropped {dropped}")
-
-    return "\n".join(parts)
 
 
 # Follow-up phrasing and function words: what is left after removing them is the query's own topic
@@ -140,10 +115,15 @@ class ChatbotService:
         self._cache_misses = 0
         self._cache_access_times = {}  # Track access times for LRU
         self._cache_lock = threading.Lock()  # The service is shared across requests
+        self.budget_manager = TokenBudgetManager()
 
         # Initialize async OpenAI client with optional base_url (for local LLM e.g. llama.cpp)
         base_url = Config.LLM.OPENAI_BASE_URL()
         api_key = Config.LLM.OPENAI_API_KEY() or ("local" if base_url else None)
+        
+        if api_key == "local" and not base_url:
+            raise ValueError("Local LLM mode requires OPENAI_BASE_URL to be configured.")
+
         self.async_openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url) if api_key else None
 
         # Assume usable when a key or local base_url is configured; probe_api() confirms it at startup
@@ -155,6 +135,10 @@ class ChatbotService:
         """Get synchronous OpenAI client configured for Cloud or Local LLM."""
         base_url = Config.LLM.OPENAI_BASE_URL()
         api_key = Config.LLM.OPENAI_API_KEY() or ("local" if base_url else None)
+        
+        if api_key == "local" and not base_url:
+            raise ValueError("Local LLM mode requires OPENAI_BASE_URL to be configured.")
+            
         return openai.OpenAI(
             api_key=api_key,
             base_url=base_url
@@ -451,8 +435,8 @@ class ChatbotService:
         Returns:
             Dict containing response, confidence metrics, and search metadata
         """
-        # History comes straight from the request body - strip anything that is
-        # not a plain user/assistant turn before it reaches the model
+        # We only do structural sanitization here.
+        # Budgeting and truncation are handled by TokenBudgetManager.
         history = _sanitize_history(history)
 
         if not self.api_available:
@@ -461,34 +445,41 @@ class ChatbotService:
 
         try:
             logger.info(f" Processing query with history: '{query[:50]}...'")
-            logger.info(f" History length: {len(history) if history else 0} messages")
-            logger.info(f"📄 Using pre-built context: {len(context)} characters")
             
+            # Centralized budgeting calculation
+            base_system = self.prompt_manager.get_system_prompt(context="")
+            try:
+                formatted_rag_context, retained_history, safe_max_tokens = self.budget_manager.build_prompt_and_budget(
+                    base_system_prompt=base_system,
+                    query=query,
+                    search_results=search_results or [],
+                    history=history or [],
+                    context_str=context
+                )
+            except ValueError as ve:
+                logger.error(f" Budgeting error: {ve}")
+                return self._create_error_response(query, str(ve))
+                
             # Log context preview for debugging
-            if context:
-                context_preview = context[:200].replace('\n', ' ').replace('\r', ' ')
+            if formatted_rag_context:
+                context_preview = formatted_rag_context[:200].replace('\n', ' ').replace('\r', ' ')
                 logger.info(f"📄 Context preview: {context_preview}...")
             else:
-                logger.warning(" No context provided")
+                logger.warning(" No context provided or context dropped due to budget")
             
-            # Build OpenAI messages with history
+            # Build final messages
             messages = [
-                {"role": "system", "content": self.prompt_manager.get_system_prompt(context=context)}
+                {"role": "system", "content": self.prompt_manager.get_system_prompt(context=formatted_rag_context)}
             ]
             
-            # Add conversation history if provided
-            if history:
-                # Limit history to prevent token overflow
-                max_history_messages = min(len(history), 20)  # Limit to last 20 messages
-                history_to_include = history[-max_history_messages:]
-                messages.extend(history_to_include)
-                logger.info(f" Included {len(history_to_include)} history messages")
+            if retained_history:
+                messages.extend(retained_history)
+                logger.info(f" Included {len(retained_history)} history messages (after budget)")
             
-            # Add current query
             messages.append({"role": "user", "content": query})
 
             # Check cache for speed (cache key includes history for uniqueness)
-            cache_key = self._get_cache_key_with_history(query, context, history)
+            cache_key = self._get_cache_key_with_history(query, formatted_rag_context, retained_history)
             cached_response = self._get_cached_response(cache_key)
             if cached_response:
                 logger.debug("⚡ Using cached response")
@@ -517,12 +508,12 @@ class ChatbotService:
                 }
 
             # Make optimized API call
-            logger.info(" Making API call to OpenAI...")
+            logger.info(f" Making API call to OpenAI... (safe_max_tokens: {safe_max_tokens})")
             client = self._get_sync_client()
             response = client.chat.completions.create(
                 model=Config.LLM.OPENAI_MODEL(),
                 messages=messages,  # type: ignore
-                max_tokens=Config.LLM.OPENAI_MAX_TOKENS(),
+                max_tokens=safe_max_tokens,
                 temperature=Config.LLM.OPENAI_TEMPERATURE(),
                 timeout=Config.LLM.OPENAI_TIMEOUT()
             )
@@ -609,7 +600,6 @@ class ChatbotService:
                     logger.info(f"🔍 Using enriched query for streaming search: '{search_query[:100]}...'")
             
             # Async context retrieval if RAG enabled
-            context = ""
             search_results: List[Dict[str, Any]] = []
             if documents is not None and embeddings is not None and len(documents) > 0:
                 try:
@@ -621,34 +611,40 @@ class ChatbotService:
                         k=Config.RAG.RETRIEVAL_TOP_K(),
                         semantic_weight=Config.RAG.SEMANTIC_WEIGHT()
                     )
-                    
-                    # Build context from hybrid search results
-                    context = _build_context(search_results, Config.LLM.MAX_CONTEXT_LENGTH())
                 except Exception as e:
                     logger.warning(f" Hybrid search failed (streaming): {e}")
-                    context = ""
             
+            user_message_query = search_query if search_query != query else query
+            
+            # Use TokenBudgetManager to construct prompt safely
+            base_system = self.prompt_manager.get_system_prompt(context="")
+            try:
+                formatted_rag_context, retained_history, safe_max_tokens = self.budget_manager.build_prompt_and_budget(
+                    base_system_prompt=base_system,
+                    query=user_message_query,
+                    search_results=search_results,
+                    history=history or []
+                )
+            except ValueError as ve:
+                logger.error(f" Budgeting error in streaming: {ve}")
+                yield f"Error: {str(ve)}"
+                return
+
             # Build messages with proper OpenAI types
             openai_messages: List[ChatCompletionMessageParam] = [
-                {"role": "system", "content": str(self.prompt_manager.get_system_prompt(context=context))}
+                {"role": "system", "content": str(self.prompt_manager.get_system_prompt(context=formatted_rag_context))}
             ]
-            if history:
-                max_history_messages = min(len(history), 20)
-                history_to_include = history[-max_history_messages:]
-                for msg in history_to_include:
-                    # Already validated by _sanitize_history
+            if retained_history:
+                for msg in retained_history:
                     openai_messages.append(cast(ChatCompletionMessageParam, msg))
             
-            # Use enriched query for user message to provide better context to LLM
-            # This ensures LLM understands what the user is asking about
-            user_message_query = search_query if search_query != query else query
             openai_messages.append({"role": "user", "content": str(user_message_query)})
 
             # Use the shared AsyncOpenAI client for streaming
             response_stream = await self.async_openai_client.chat.completions.create(
                 model=Config.LLM.OPENAI_MODEL(),
                 messages=openai_messages,  # type: ignore
-                max_tokens=Config.LLM.OPENAI_MAX_TOKENS(),
+                max_tokens=safe_max_tokens,
                 temperature=Config.LLM.OPENAI_TEMPERATURE(),
                 stream=True
             )

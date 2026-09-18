@@ -28,3 +28,4 @@ onnxruntime==1.29.0
 # Use opencv-python-headless for headless server/Docker environments (satisfies cv2 for both easyocr and rapidocr)
 opencv-python-headless==4.11.0.86
 pymupdf==1.28.2
+tiktoken>=0.8.0

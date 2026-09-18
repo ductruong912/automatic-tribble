@@ -188,21 +188,28 @@ async def lifespan(app: FastAPI):
         
         # Warm up LLM API (OpenAI Cloud or Local server) to avoid first-request delay
         try:
-            target_desc = f"Local LLM ({Config.LLM.OPENAI_BASE_URL()})" if Config.LLM.OPENAI_BASE_URL() else "OpenAI Cloud API"
-            logger.info(f"Warming up {target_desc}...")
-            import openai
-            client = openai.OpenAI(
-                api_key=Config.LLM.OPENAI_API_KEY() or "local",
-                base_url=Config.LLM.OPENAI_BASE_URL()
-            )
-            # Make a tiny warmup call
-            response = client.chat.completions.create(
-                model=Config.LLM.OPENAI_MODEL(),
-                messages=[{"role": "user", "content": "Hi"}],
-                max_tokens=10,
-                timeout=10
-            )
-            logger.info(f"{target_desc} warmed up successfully")
+            base_url = Config.LLM.OPENAI_BASE_URL()
+            api_key = Config.LLM.OPENAI_API_KEY() or ("local" if base_url else None)
+            
+            if api_key == "local" and not base_url:
+                raise ValueError("Local LLM mode requires OPENAI_BASE_URL to be configured.")
+                
+            if api_key:
+                target_desc = f"Local LLM ({base_url})" if base_url else "OpenAI Cloud API"
+                logger.info(f"Warming up {target_desc}...")
+                import openai
+                client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url=base_url
+                )
+                # Make a tiny warmup call
+                response = client.chat.completions.create(
+                    model=Config.LLM.OPENAI_MODEL(),
+                    messages=[{"role": "user", "content": "Hi"}],
+                    max_tokens=10,
+                    timeout=10
+                )
+                logger.info(f"{target_desc} warmed up successfully")
         except Exception as e:
             logger.warning(f"LLM API warmup skipped: {e}")
         

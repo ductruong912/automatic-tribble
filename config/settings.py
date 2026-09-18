@@ -54,11 +54,35 @@ class LLMConfig:
 
     @staticmethod
     def MAX_CONTEXT_LENGTH():
+        """Deprecated: Secondary character cap on RAG context. The token budget is the final safety boundary."""
         return int(os.getenv("MAX_CONTEXT_LENGTH", "5000"))
 
     @staticmethod
     def OPENAI_MAX_TOKENS():
+        """Desired maximum output tokens. This is dynamically reduced if it exceeds remaining context window."""
         return int(os.getenv("OPENAI_MAX_TOKENS", "5000"))
+
+    @staticmethod
+    def CONTEXT_WINDOW():
+        """
+        The absolute context window capacity of the TARGET model/server.
+        Default 8192 matches the local llama.cpp script (n_ctx=8192).
+        For OpenAI GPT-4o-mini, this can be safely increased to 128000.
+        """
+        return int(os.getenv("CONTEXT_WINDOW", "8192"))
+
+    @staticmethod
+    def CONTEXT_SAFETY_MARGIN():
+        """
+        Safety margin (e.g. 0.1 for 10%) reserved to account for token estimation drift
+        when using cl100k_base to estimate tokens for non-OpenAI local models (like Qwen/Llama).
+        """
+        return float(os.getenv("CONTEXT_SAFETY_MARGIN", "0.1"))
+
+    @staticmethod
+    def MIN_OUTPUT_TOKENS():
+        """Minimum acceptable remaining tokens for the model response."""
+        return int(os.getenv("MIN_OUTPUT_TOKENS", "500"))
 
 
     @staticmethod
@@ -87,7 +111,10 @@ class LLMConfig:
 
     @staticmethod
     def MAX_HISTORY_MESSAGE_LENGTH():
-        """Cap on each client-supplied history message, in characters."""
+        """
+        Deprecated: Secondary character cap on each client-supplied history message. 
+        The centralized token budget is the final safety boundary.
+        """
         return int(os.getenv("MAX_HISTORY_MESSAGE_LENGTH", "4000"))
 
 
