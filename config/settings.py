@@ -44,6 +44,11 @@ class LLMConfig:
         return os.getenv("OPENAI_API_KEY")
 
     @staticmethod
+    def OPENAI_BASE_URL():
+        raw = os.getenv("OPENAI_BASE_URL", "").strip()
+        return raw if raw else None
+
+    @staticmethod
     def OPENAI_MODEL():
         return os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -445,10 +450,10 @@ class Config:
             os.path.dirname(DatabaseConfig.VECTOR_STORE_PATH())
         )
 
-        # Check for required OpenAI API key
-        if not Config.LLM.OPENAI_API_KEY():
+        # Check for required API key (only strictly required when NOT using custom OPENAI_BASE_URL)
+        if not Config.LLM.OPENAI_BASE_URL() and not Config.LLM.OPENAI_API_KEY():
             logger.warning(
-                " Warning: OPENAI_API_KEY not set. Chat functionality may not work."
+                " Warning: Neither OPENAI_API_KEY nor OPENAI_BASE_URL is set. Chat functionality may not work."
             )
             return False
 

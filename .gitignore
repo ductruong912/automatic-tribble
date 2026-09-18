@@ -161,4 +161,7 @@ cython_debug/
 
 # Custom ignore
 data/
+bin/
+*.gguf
 .cursor/
+.agents/

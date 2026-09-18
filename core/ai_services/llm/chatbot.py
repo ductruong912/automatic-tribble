@@ -141,22 +141,33 @@ class ChatbotService:
         self._cache_access_times = {}  # Track access times for LRU
         self._cache_lock = threading.Lock()  # The service is shared across requests
 
-        # Initialize async OpenAI client
-        self.async_openai_client = AsyncOpenAI(api_key=Config.LLM.OPENAI_API_KEY())
+        # Initialize async OpenAI client with optional base_url (for local LLM e.g. llama.cpp)
+        base_url = Config.LLM.OPENAI_BASE_URL()
+        api_key = Config.LLM.OPENAI_API_KEY() or ("local" if base_url else None)
+        self.async_openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url) if api_key else None
 
-        # Assume usable when a key is configured; probe_api() confirms it at startup
-        self._api_available = bool(Config.LLM.OPENAI_API_KEY())
+        # Assume usable when a key or local base_url is configured; probe_api() confirms it at startup
+        self._api_available = bool(Config.LLM.OPENAI_API_KEY() or Config.LLM.OPENAI_BASE_URL())
         if not self._api_available:
-            logger.warning(" OpenAI API key not configured")
+            logger.warning(" Neither OpenAI API key nor OPENAI_BASE_URL configured")
+
+    def _get_sync_client(self) -> openai.OpenAI:
+        """Get synchronous OpenAI client configured for Cloud or Local LLM."""
+        base_url = Config.LLM.OPENAI_BASE_URL()
+        api_key = Config.LLM.OPENAI_API_KEY() or ("local" if base_url else None)
+        return openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
 
     @property
     def api_available(self) -> bool:
-        """Check if the OpenAI API is available."""
+        """Check if the LLM API is available."""
         return self._api_available
 
     def probe_api(self) -> bool:
         """
-        Check the OpenAI API once and record the result.
+        Check the LLM API once and record the result.
         Called at startup - never from __init__, so building the service costs no network round trip.
         """
         self._api_available = self._test_api()
@@ -164,21 +175,22 @@ class ChatbotService:
 
     def _test_api(self) -> bool:
         """
-        Test OpenAI API availability.
+        Test LLM API availability (Cloud OpenAI or Local OpenAI-compatible server).
         Treats HTTP errors (4xx) as "reachable" to allow startup,
         while catching genuine connection errors.
         """
-        if not Config.LLM.OPENAI_API_KEY():
-            logger.warning(" OpenAI API key not configured")
+        if not Config.LLM.OPENAI_API_KEY() and not Config.LLM.OPENAI_BASE_URL():
+            logger.warning(" Neither OpenAI API key nor OPENAI_BASE_URL configured")
             return False
         try:
-            client = openai.OpenAI(api_key=Config.LLM.OPENAI_API_KEY())
+            client = self._get_sync_client()
             client.chat.completions.create(
                 model=Config.LLM.OPENAI_MODEL(),
                 messages=[{"role": "user", "content": "test"}],
                 max_tokens=1
             )
-            logger.info(" OpenAI API available and responding.")
+            provider_desc = f"Local LLM ({Config.LLM.OPENAI_BASE_URL()})" if Config.LLM.OPENAI_BASE_URL() else "OpenAI Cloud"
+            logger.info(f" {provider_desc} API available and responding.")
             return True
         except APIStatusError as e:
             # The API is reachable but returned an error status code (e.g., 401, 429).
@@ -266,7 +278,8 @@ class ChatbotService:
     async def aclose(self):
         """Close the OpenAI client. Called once at shutdown."""
         try:
-            await self.async_openai_client.close()
+            if self.async_openai_client:
+                await self.async_openai_client.close()
         except Exception as e:
             logger.warning(f"Error closing OpenAI client: {e}")
         logger.info("ChatbotService cleanup completed")
@@ -356,7 +369,7 @@ class ChatbotService:
             # Make optimized API call with better error handling
             logger.info(" Making API call to OpenAI...")
             try:
-                client = openai.OpenAI(api_key=Config.LLM.OPENAI_API_KEY())
+                client = self._get_sync_client()
                 response = client.chat.completions.create(
                     model=Config.LLM.OPENAI_MODEL(),
                     messages=messages,  # type: ignore
@@ -505,7 +518,7 @@ class ChatbotService:
 
             # Make optimized API call
             logger.info(" Making API call to OpenAI...")
-            client = openai.OpenAI(api_key=Config.LLM.OPENAI_API_KEY())
+            client = self._get_sync_client()
             response = client.chat.completions.create(
                 model=Config.LLM.OPENAI_MODEL(),
                 messages=messages,  # type: ignore

@@ -186,21 +186,25 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Vector store warmup skipped: {e}")
         
-        # Warm up OpenAI API to avoid first-request delay
+        # Warm up LLM API (OpenAI Cloud or Local server) to avoid first-request delay
         try:
-            logger.info("Warming up OpenAI API...")
+            target_desc = f"Local LLM ({Config.LLM.OPENAI_BASE_URL()})" if Config.LLM.OPENAI_BASE_URL() else "OpenAI Cloud API"
+            logger.info(f"Warming up {target_desc}...")
             import openai
-            client = openai.OpenAI(api_key=Config.LLM.OPENAI_API_KEY())
+            client = openai.OpenAI(
+                api_key=Config.LLM.OPENAI_API_KEY() or "local",
+                base_url=Config.LLM.OPENAI_BASE_URL()
+            )
             # Make a tiny warmup call
             response = client.chat.completions.create(
                 model=Config.LLM.OPENAI_MODEL(),
                 messages=[{"role": "user", "content": "Hi"}],
                 max_tokens=10,
-                timeout=5
+                timeout=10
             )
-            logger.info("OpenAI API warmed up successfully")
+            logger.info(f"{target_desc} warmed up successfully")
         except Exception as e:
-            logger.warning(f"OpenAI API warmup skipped: {e}")
+            logger.warning(f"LLM API warmup skipped: {e}")
         
         logger.info("Warmup complete")
     except Exception as e:
