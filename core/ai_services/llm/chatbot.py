@@ -124,7 +124,10 @@ class ChatbotService:
         if api_key == "local" and not base_url:
             raise ValueError("Local LLM mode requires OPENAI_BASE_URL to be configured.")
 
-        self.async_openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url) if api_key else None
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.async_openai_client = AsyncOpenAI(**client_kwargs) if api_key else None
 
         # Assume usable when a key or local base_url is configured; probe_api() confirms it at startup
         self._api_available = bool(Config.LLM.OPENAI_API_KEY() or Config.LLM.OPENAI_BASE_URL())
@@ -139,10 +142,10 @@ class ChatbotService:
         if api_key == "local" and not base_url:
             raise ValueError("Local LLM mode requires OPENAI_BASE_URL to be configured.")
             
-        return openai.OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        return openai.OpenAI(**client_kwargs)
 
     @property
     def api_available(self) -> bool:
@@ -660,67 +663,37 @@ class ChatbotService:
 
     def _enrich_query_with_history(self, query: str, history: Optional[List[Dict[str, str]]] = None) -> str:
         """
-        Intelligently enrich query with conversation context using semantic understanding.
-        Analyzes query intent and conversation context to provide relevant enrichment.
+        Domain-agnostic query enrichment using conversation history.
+        Enriches follow-ups and brief queries with the preceding topic without
+        overwriting the user's keywords or relying on hardcoded business entities.
         
         Args:
             query: Original user query
             history: Conversation history
             
         Returns:
-            Semantically enriched query that maintains conversation context
+            Enriched query that maintains conversation context
         """
         if not history or len(history) == 0:
             return query
             
         try:
-            # Analyze query intent
-            query_intent = self._analyze_query_intent(query)
+            intent = self._analyze_query_intent(query)
             
-            # Extract conversation context
-            context_info = self._extract_conversation_context(history)
-            
-            # RULE 1: Skip enrichment for new questions (specific entity queries)
-            # E.g., "ai là CEO của TNT", "địa chỉ công ty ở đâu"
-            if query_intent.get("type") == "new_question":
-                logger.info(f"🆕 New question detected - skipping enrichment: '{query}'")
-                logger.info(f"   Has entity: {query_intent.get('has_entity')}, Has WH-word: {query_intent.get('has_wh_word')}")
+            # If self-contained question with its own subject, search as asked
+            if intent.get("is_self_contained", False):
+                logger.info(f"🆕 Self-contained query detected - skipping enrichment: '{query}'")
                 return query
-            
-            # RULE 2/3: For follow-up queries without a strong indicator:
-            # - Vague ("giải thích thêm", "tại sao?"): search with the last real question's subject
-            # - Names its own subject: search it as asked
-            if query_intent.get("type") == "follow_up":
-                strong_follow_up_indicators = [
-                    # Pronouns (strongest signal)
-                    "nó", "đó", "này", "chúng",
-                    # Detail requests (strong signal)
-                    "cho tôi", "cho biết", "biết thêm", "chi tiết hơn",
-                    "thông tin chi tiết", "cụ thể hơn"
-                ]
-                has_strong_follow_up = any(indicator in query.lower() for indicator in strong_follow_up_indicators)
-
-                # If has strong indicator, always enrich
-                if has_strong_follow_up:
-                    logger.info(f"🔗 Strong follow-up indicator detected - enriching: '{query}'")
-                elif _content_words(query):
-                    # Appended keyword context mislabels the topic, so keep the query as asked
-                    logger.info(f"🔀 Follow-up names its own subject - skipping enrichment: '{query}'")
-                    return query
-                else:
-                    subject = self._last_subject_question(history)
-                    if subject:
-                        enriched_query = f"{query} ({subject})"
-                        logger.info(f"🔗 Vague follow-up - borrowing last question: '{query}' -> '{enriched_query}'")
-                        return enriched_query
-            
-            # RULE 4: Enrich strong follow-ups and brief queries with keyword context
-            if query_intent.get("needs_context", False) and context_info.get("has_relevant_context", False):
-                enriched_query = self._enrich_based_on_intent(query, query_intent, context_info)
                 
-                if enriched_query != query:
-                    logger.info(f"🎯 Intent-based enrichment: '{query}' -> '{enriched_query}'")
-                    logger.info(f"   Intent: {query_intent.get('type', 'unknown')}, Context: {context_info.get('main_topic', 'none')}")
+            # If query needs context (follow-up, pronoun, or brief)
+            if intent.get("needs_context", False):
+                subject = self._last_subject_question(history)
+                if subject:
+                    clean_subject = subject.strip()
+                    if len(clean_subject) > 120:
+                        clean_subject = clean_subject[:120].strip() + "..."
+                    enriched_query = f"{query} ({clean_subject})"
+                    logger.info(f"🔗 Contextual enrichment: '{query}' -> '{enriched_query}'")
                     return enriched_query
             
             return query
@@ -728,162 +701,65 @@ class ChatbotService:
         except Exception as e:
             logger.warning(f" Query enrichment failed: {e}")
             return query
-    
+
     def _analyze_query_intent(self, query: str) -> Dict[str, Any]:
         """
-        Analyze the intent of a user query to determine if it needs context enrichment.
+        Analyze query intent purely through linguistic patterns (domain-agnostic).
+        Identifies follow-up signals, pronouns, and substantive content words.
         
         Args:
             query: User query to analyze
             
         Returns:
-            Dict containing intent analysis
+            Dict containing linguistic intent analysis
         """
         query_lower = query.lower().strip()
         words = query_lower.split()
+        content_words = _content_words(query)
         
-        # Specific product/service mentions make query specific
-        specific_products = [
-            "tn bidmate", "tnm auto", "tnm fin", "tn edu", "tnm edu",
-            "phần mềm quản lý tour", "quản lý tour du lịch"
+        # Referring pronouns in Vietnamese & English
+        pronouns = [
+            "nó", "đó", "này", "chúng", "kia", "ấy", "đây",
+            "it", "they", "them", "this", "that", "these", "those"
         ]
+        has_pronoun = any(re.search(rf"(?<!\w){re.escape(p)}(?!\w)", query_lower) for p in pronouns)
         
-        has_specific_product = any(product in query_lower for product in specific_products)
-        
-        # Check if query contains WH-questions with specific entity
-        # E.g., "ai là CEO", "địa chỉ ở đâu", "sản phẩm nào"
-        wh_words = ["ai", "gì", "đâu", "nào", "bao nhiêu", "khi nào", "thế nào"]
-        has_wh_word = any(wh in query_lower for wh in wh_words)
-        
-        # Check for specific nouns/entities that make query self-contained
-        specific_entities = [
-            # People & organization
-            "ceo", "giám đốc", "sáng lập", "founder", "nhân viên", "team",
-            "tnt", "công ty", "tringhiatech",
-            # Places & contact
-            "địa chỉ", "văn phòng", "office", "liên hệ", "contact",
-            "email", "phone", "điện thoại", "hotline",
-            # Products & services  
-            "sản phẩm", "product", "dịch vụ", "service", "giải pháp", "solution",
-            "phần mềm", "software", "ứng dụng", "app",
-            # General info requests
-            "giới thiệu", "introduction", "về", "about",
-            "lịch sử", "history", "thành lập", "established"
+        # Common follow-up and detail request phrasing
+        follow_up_phrases = [
+            "chi tiết hơn", "cụ thể hơn", "rõ hơn", "nói rõ", "giải thích thêm",
+            "thêm thông tin", "cho tôi biết", "cho biết thêm", "thế nào", "như thế nào",
+            "bao nhiêu", "làm sao", "tại sao", "được không", "có được không",
+            "more details", "details", "explain more", "how much", "tell me more"
         ]
+        has_follow_up = any(phrase in query_lower for phrase in follow_up_phrases)
         
-        has_specific_entity = any(entity in query_lower for entity in specific_entities)
+        # Greetings / small talk
+        greetings = ["chào", "xin chào", "hello", "hi", "cảm ơn", "thank", "tạm biệt", "bye"]
+        is_greeting = len(words) <= 4 and any(re.search(rf"(?<!\w){re.escape(g)}(?!\w)", query_lower) for g in greetings)
         
-        # If query has WH-word + specific entity, it's likely a NEW question
-        # E.g., "ai là CEO", "địa chỉ ở đâu", "sản phẩm nào"
-        is_new_question = has_wh_word and has_specific_entity
+        # Short / brief query
+        is_brief = len(content_words) <= 2
         
-        # Pure follow-up indicators (vague requests without specific entity)
-        follow_up_indicators = [
-            # Detail requests (vague)
-            "thông tin chi tiết", "chi tiết hơn", "giải thích thêm",
-            "thêm thông tin", "nói rõ hơn", "cụ thể hơn",
-            "tất cả thông tin", "đầy đủ", "toàn bộ", "hoàn chỉnh",
-            "biết thêm", "cho biết", "cho tôi",
-            # Pronoun references (definitely follow-up)
-            "nó", "chúng", "đó", "này",
-            # Question phrases without entity
-            "làm thế nào", "cách nào", "tại sao",
-            "details", "more information", "explain"
-        ]
+        # Self-contained if has 3+ content words, no referring pronouns, and not purely a follow-up phrase
+        is_self_contained = len(content_words) >= 3 and not has_pronoun and not has_follow_up
         
-        has_follow_up_indicator = any(indicator in query_lower for indicator in follow_up_indicators)
+        # Needs context if it has referring pronoun, follow-up phrase, or is very brief (and not just greeting)
+        needs_context = (has_pronoun or has_follow_up or is_brief) and not is_greeting
         
-        # Very short queries without specific entity need context
-        is_very_short = len(words) <= 3 and not has_specific_entity
-        
-        # Determine intent type
-        intent_type = "unknown"
-        if has_follow_up_indicator:
-            intent_type = "follow_up"
-        elif is_new_question:
-            intent_type = "new_question"  # New question with specific entity
-        elif has_specific_entity and not has_wh_word:
-            # Query like "giới thiệu về TNT" - has entity but no WH word
-            intent_type = "new_question"
-        elif is_very_short:
-            intent_type = "brief"
+        intent_type = "self_contained" if is_self_contained else ("follow_up" if needs_context else "general")
         
         return {
             "type": intent_type,
-            "is_specific": has_specific_product or has_specific_entity,
-            "needs_context": has_follow_up_indicator or is_very_short,
-            "has_follow_up": has_follow_up_indicator,
-            "has_wh_word": has_wh_word,
-            "has_entity": has_specific_entity,
-            "is_new_question": is_new_question,
-            "is_brief": is_very_short,
+            "has_pronoun": has_pronoun,
+            "has_follow_up": has_follow_up,
+            "is_brief": is_brief,
+            "is_greeting": is_greeting,
+            "is_self_contained": is_self_contained,
+            "needs_context": needs_context,
+            "content_words_count": len(content_words),
             "word_count": len(words)
         }
-    
-    def _extract_conversation_context(self, history: List[Dict[str, str]]) -> Dict[str, Any]:
-        """
-        Extract relevant context information from conversation history.
-        
-        Args:
-            history: Conversation history
-            
-        Returns:
-            Dict containing context information
-        """
-        recent_history = history[-10:]  # Last 10 messages
-        
-        products = set()
-        topics = set()
-        last_assistant_response = ""
-        
-        # Product/service keywords
-        product_keywords = {
-            "tn bidmate": ["tn bidmate", "bidmate", "đấu thầu", "dược phẩm"],
-            "tnm auto": ["tnm auto", "ô tô", "bán hàng", "hậu mãi"],
-            "tnm fin": ["tnm fin", "tài chính", "kế toán", "quản lý tài chính"],
-            "tn edu": ["tn edu", "tnm edu", "trường học", "giáo dục", "học sinh"]
-        }
-        
-        # Topic keywords
-        topic_keywords = [
-            "thành công", "câu chuyện", "triển khai", "case study",
-            "chuyển đổi số", "quản lý", "tự động hóa", "hiệu quả"
-        ]
-        
-        for msg in recent_history:
-            content = msg.get("content", "").lower()
-            
-            # Extract products
-            for product, aliases in product_keywords.items():
-                if any(alias in content for alias in aliases):
-                    products.add(product)
-            
-            # Extract topics
-            for topic in topic_keywords:
-                if topic in content:
-                    topics.add(topic)
-            
-            # Get last assistant response
-            if msg.get("role") == "assistant":
-                last_assistant_response = msg.get("content", "")
-        
-        # Determine main topic from last assistant response
-        main_topic = "general"
-        if last_assistant_response:
-            for product, aliases in product_keywords.items():
-                if any(alias in last_assistant_response.lower() for alias in aliases):
-                    main_topic = product
-                    break
-        
-        return {
-            "products": products,
-            "topics": topics,
-            "main_topic": main_topic,
-            "has_relevant_context": bool(products or topics),
-            "last_assistant_response_length": len(last_assistant_response),
-            "last_assistant_response": last_assistant_response[:500]  # Keep recent context
-        }
-    
+
     @staticmethod
     def _last_subject_question(history: List[Dict[str, str]]) -> Optional[str]:
         """Most recent user question that names a subject, skipping earlier vague follow-ups."""
@@ -891,86 +767,3 @@ class ChatbotService:
             if msg.get("role") == "user" and _content_words(msg.get("content", "")):
                 return msg["content"].strip()[:300]
         return None
-
-    def _enrich_based_on_intent(self, query: str, intent: Dict[str, Any], context: Dict[str, Any]) -> str:
-        """
-        Enrich query based on analyzed intent and conversation context.
-        
-        Args:
-            query: Original query
-            intent: Intent analysis result
-            context: Context extraction result
-            
-        Returns:
-            Enriched query
-        """
-        try:
-            query_lower = query.lower().strip()
-            
-            # Build context string
-            context_parts = []
-            
-            # Add main topic/product first
-            if context.get("main_topic") and context["main_topic"] != "general":
-                context_parts.append(context["main_topic"])
-            
-            # Add other mentioned products
-            other_products = context.get("products", set()) - {context.get("main_topic")}
-            if other_products:
-                context_parts.extend(list(other_products))
-            
-            # Add topics
-            if context.get("topics"):
-                context_parts.extend(list(context["topics"]))
-            
-            context_str = " ".join(context_parts)
-            
-            # Enrich based on intent type
-            if intent.get("type") == "follow_up":
-                if "thông tin chi tiết" in query_lower or "chi tiết" in query_lower:
-                    if context_str:
-                        return f"thông tin chi tiết về {context_str}"
-                        
-                elif "giải thích" in query_lower:
-                    if context_str:
-                        return f"giải thích về {context_str}"
-                        
-                else:
-                    # Generic follow-up
-                    if context_str:
-                        return f"{query} về {context_str}"
-                        
-            elif intent.get("type") == "question":
-                # For questions, append context
-                if context_str:
-                    return f"{query} về {context_str}"
-                    
-            elif intent.get("type") == "brief":
-                # For brief queries, intelligently combine
-                if context_str:
-                    return f"{query} {context_str}"
-            
-            # Enhanced fallback for queries seeking information
-            if context_str:
-                # Check for information-seeking patterns
-                info_seeking_patterns = [
-                    "tất cả", "toàn bộ", "đầy đủ", "hoàn chỉnh",
-                    "thông tin", "chi tiết", "tính năng", "chức năng",
-                    "all", "full", "complete", "information", "details"
-                ]
-                
-                has_info_seeking = any(pattern in query_lower for pattern in info_seeking_patterns)
-                
-                # Check for pronouns (indicating reference to previous topic)
-                pronouns = ["nó", "chúng", "đó", "này", "it", "they", "that", "this"]
-                has_pronoun = any(pronoun in query_lower for pronoun in pronouns)
-                
-                # Enrich if: seeking info OR has pronoun OR query is short
-                if has_info_seeking or has_pronoun or intent.get("word_count", 10) <= 5:
-                    return f"{query} về {context_str}"
-                
-            return query
-            
-        except Exception as e:
-            logger.warning(f" Intent-based enrichment failed: {e}")
-            return query

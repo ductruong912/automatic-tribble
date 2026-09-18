@@ -2,5 +2,5 @@
 headless = true
 port     = 8505
 address  = "0.0.0.0"
-sslCertFile = "./SSL/fullchain.pem"
-sslKeyFile  = "./SSL/privkey_converted.pem"
+# sslCertFile = "./SSL/fullchain.pem"
+# sslKeyFile  = "./SSL/privkey_converted.pem"

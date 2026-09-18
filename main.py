@@ -114,12 +114,12 @@ def setup_logging() -> logging.Logger:
 
 # Initialize logging immediately on module import so all subsequent operations are logged
 setup_logging()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
-    logger = logging.getLogger()
     workers = Config.Server.UVICORN_WORKERS()
     display_host = (
         "localhost" if Config.Server.HOST() == "0.0.0.0" else Config.Server.HOST()

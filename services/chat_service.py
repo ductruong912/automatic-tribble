@@ -7,7 +7,6 @@ import numpy as np
 
 # Local imports
 from core.ai_services import ChatbotService
-from core.ai_services.llm.chatbot import _build_context
 from core.storage.vector_stores import VectorStore
 from config.settings import Config
 from models.responses import ErrorResponse, BaseResponse, StatusEnum
